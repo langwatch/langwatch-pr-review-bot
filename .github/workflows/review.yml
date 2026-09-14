@@ -1,0 +1,38 @@
+name: PR Review Bot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  prerequisites:
+    name: Prerequisites
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "Replace with repository build/test/lint checks"
+
+  review:
+    name: PR Review Bot
+    needs: prerequisites
+    if: ${{ needs.prerequisites.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -e '.[test]'
+      - name: Test review decision logic
+        run: python -m pytest
+      - name: Review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Reviewer implementation will consume the PR diff and REVIEW_RULES.md"
+          echo "A future step will post APPROVE or REQUEST_CHANGES and make this job fail on violations."
