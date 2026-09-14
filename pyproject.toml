@@ -1,0 +1,12 @@
+[project]
+name = "langwatch-pr-review-bot"
+version = "0.1.0"
+description = "Violation-focused automated GitHub pull request reviewer"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
