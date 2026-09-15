@@ -147,6 +147,19 @@ jobs:
 
           review_schema='{"type":"object","properties":{"violations":{"type":"array","items":{"type":"object","properties":{"rule_id":{"type":"string"},"message":{"type":"string"},"path":{"type":["string","null"]},"line":{"type":["integer","null"]}},"required":["rule_id","message","path","line"],"additionalProperties":false}}},"required":["violations"],"additionalProperties":false}'
 
+          # `claude -p --json-schema` does not reliably populate `.structured_output`;
+          # `.result` can also be prose with the JSON in a fenced block. Try, in order:
+          # structured_output, `.result` as raw JSON, a ```json fence in `.result`,
+          # then `.result` trimmed to its outermost braces.
+          extract_violations() {
+            local json="$1" out
+            out="$(jq -c '.structured_output.violations' "$json" 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
+            out="$(jq -c '(.result | fromjson).violations' "$json" 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
+            out="$(jq -r '.result' "$json" 2>/dev/null | awk '/^```json/{f=1;next} /^```/{f=0} f' | jq -c '.violations' 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
+            out="$(jq -r '.result' "$json" 2>/dev/null | awk 'BEGIN{RS="\0"}{s=$0;i=index(s,"{");j=length(s);while(j>0&&substr(s,j,1)!="}")j--;print substr(s,i,j-i+1)}' | jq -c '.violations' 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
+            return 1
+          }
+
           {
             printf '%s\n' '<review-input>' '<pr-title>'
             printf '%s\n' "$PR_TITLE"
@@ -173,10 +186,7 @@ jobs:
             exit "$rc"
           fi
 
-          # With --json-schema the CLI returns the schema-constrained object as a
-          # JSON string in `.result`; `.structured_output` stays null (2.1.270).
-          # Fall back to `.structured_output` in case a later version populates it.
-          if ! jq -c '(.structured_output // (.result | fromjson)).violations' claude-review.json > violations.json 2>/dev/null \
+          if ! extract_violations claude-review.json > violations.json 2>/dev/null \
             || ! jq -e 'type == "array"' violations.json >/dev/null 2>&1; then
             echo "::error::Automated review output had no valid violations array. Raw claude-review.json follows."
             echo "::group::claude-review.json"
