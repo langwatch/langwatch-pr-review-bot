@@ -142,8 +142,17 @@ jobs:
             --json-schema "$review_schema" \
             < review-input.txt > claude-review.json
 
-          jq -e '.structured_output.violations | type == "array"' claude-review.json >/dev/null
-          jq -c '.structured_output.violations' claude-review.json > violations.json
+          # With --json-schema the CLI returns the schema-constrained object as a
+          # JSON string in `.result`; `.structured_output` stays null (2.1.270).
+          # Fall back to `.structured_output` in case a later version populates it.
+          if ! jq -c '(.structured_output // (.result | fromjson)).violations' claude-review.json > violations.json 2>/dev/null \
+            || ! jq -e 'type == "array"' violations.json >/dev/null 2>&1; then
+            echo "::error::Automated review output had no valid violations array. Raw claude-review.json follows."
+            echo "::group::claude-review.json"
+            cat claude-review.json
+            echo "::endgroup::"
+            exit 1
+          fi
 
           count="$(jq 'length' violations.json)"
           if [[ "$count" -eq 0 ]]; then
