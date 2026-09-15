@@ -113,12 +113,16 @@ jobs:
         run: |
           set -euo pipefail
           tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-          trimmed="$(printf '%s' "$tok" | tr -d '[:space:]')"
-          if [[ "${#trimmed}" -eq 0 ]]; then
+          echo "token length=${#tok}"
+          if [[ "${#tok}" -eq 0 ]]; then
             echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty. Create one with 'claude setup-token' and add it as a repo secret."
             exit 1
           fi
-          if [[ "$trimmed" != sk-ant-oat* ]]; then
+          if [[ "$tok" =~ [[:space:]] ]]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret token contains whitespace; re-paste the secret."
+            exit 1
+          fi
+          if [[ "$tok" != sk-ant-oat* ]]; then
             echo "::warning::CLAUDE_CODE_OAUTH_TOKEN does not start with sk-ant-oat; it may not be a valid 'claude setup-token' token."
           fi
 
@@ -146,14 +150,15 @@ jobs:
 
           # `claude -p --json-schema` does not reliably populate `.structured_output`;
           # `.result` can also be prose with the JSON in a fenced block. Try, in order:
-          # structured_output, `.result` as raw JSON, a ```json fence in `.result`,
-          # then `.result` trimmed to its outermost braces.
+          # structured_output, `.result` as raw JSON, a ```json fence in `.result`.
+          # CI run 34947688605 observed `claude -p --json-schema` returning prose with
+          # a fenced ```json block, so the third tier is an observed shape, not
+          # speculative. Every item is schema-validated afterward regardless of tier.
           extract_violations() {
             local json="$1" out
             out="$(jq -c '.structured_output.violations' "$json" 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
             out="$(jq -c '(.result | fromjson).violations' "$json" 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
             out="$(jq -r '.result' "$json" 2>/dev/null | awk '/^```json/{f=1;next} /^```/{f=0} f' | jq -c '.violations' 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
-            out="$(jq -r '.result' "$json" 2>/dev/null | awk 'BEGIN{RS="\0"}{s=$0;i=index(s,"{");j=length(s);while(j>0&&substr(s,j,1)!="}")j--;print substr(s,i,j-i+1)}' | jq -c '.violations' 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
             return 1
           }
 
