@@ -83,7 +83,7 @@ The generated brief is written to `pr-review-brief.md`, added to the GitHub Acti
 
 The workflow expects these repository secrets:
 
-- `ANTHROPIC_API_KEY` — used by Claude Code.
+- `CLAUDE_CODE_OAUTH_TOKEN` — OAuth token for Claude Code authentication. Generate locally with `claude setup-token`, which prints a token starting with `sk-ant-oat01-…`. Paste this token value as the secret. If the token is stored under the legacy secret name `ANTHROPIC_API_KEY`, the workflow uses it as a fallback.
 - `SLACK_WEBHOOK_URL` — used to post violation notifications to Slack.
 
 The GitHub token used for reviews and prerequisite thread checks comes from the built-in `GITHUB_TOKEN` secret.
