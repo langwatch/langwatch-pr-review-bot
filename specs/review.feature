@@ -30,3 +30,47 @@ Feature: Automated PR review
     And no review violations are found
     Then the PR reviewer status check passes
     And the bot does not add violation comments
+
+  Scenario: Auth token resolves from the primary secret
+    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is set
+    When the pipeline checks the Claude auth token
+    Then the token is accepted
+    And the PR reviewer proceeds
+
+  Scenario: Auth token falls back to the legacy secret
+    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is empty
+    And the repository secret "ANTHROPIC_API_KEY" is set
+    When the pipeline checks the Claude auth token
+    Then the token is accepted
+    And the PR reviewer proceeds
+
+  Scenario: Empty auth token fails before any review
+    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is empty
+    And the repository secret "ANTHROPIC_API_KEY" is empty
+    When the pipeline checks the Claude auth token
+    Then the check fails with a clear error
+    And no review is attempted
+
+  Scenario: Violations are accepted from a structured output
+    Given the "Run automated review" step returns violations as structured output
+    And every violation item matches the schema
+    When the pipeline extracts violations
+    Then the violations are accepted
+
+  Scenario: Violations are accepted from a JSON-string result
+    Given the "Run automated review" step returns violations as a JSON-encoded string in "result"
+    And every violation item matches the schema
+    When the pipeline extracts violations
+    Then the violations are accepted
+
+  Scenario: Violations are accepted from a fenced JSON block in prose
+    Given the "Run automated review" step returns violations inside a fenced ```json``` block within prose in "result"
+    And every violation item matches the schema
+    When the pipeline extracts violations
+    Then the violations are accepted
+
+  Scenario: Malformed violations fail extraction
+    Given the "Run automated review" step returns an output whose extracted items do not match the schema
+    When the pipeline extracts violations
+    Then the extraction step fails
+    And the raw output is dumped to the log

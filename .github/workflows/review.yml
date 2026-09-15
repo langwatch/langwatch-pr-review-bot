@@ -29,8 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # LangWatch OpenTelemetry — full Claude Code telemetry export.
+      # Disabled when LANGWATCH_INGEST_KEY is not configured, so a missing key never breaks the review.
       # https://langwatch.ai/docs/coding-agents/claude-code
-      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      CLAUDE_CODE_ENABLE_TELEMETRY: ${{ secrets.LANGWATCH_INGEST_KEY != '' && '1' || '0' }}
       CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "1"
       OTEL_TRACES_EXPORTER: otlp
       OTEL_LOGS_EXPORTER: otlp
@@ -59,28 +60,6 @@ jobs:
 
       - name: Verify Claude Code
         run: claude --version
-
-      - name: Verify Claude auth
-        env:
-          # Token from 'claude setup-token'. Falls back to the ANTHROPIC_API_KEY secret, which currently holds that token.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-          trimmed="$(printf '%s' "$tok" | tr -d '[:space:]')"
-          echo "token length=${#tok} trimmed_length=${#trimmed} prefix_ok=$([[ "$trimmed" == sk-ant-oat* ]] && echo yes || echo no)"
-          if [[ "${#trimmed}" -eq 0 ]]; then
-            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty. Create one with 'claude setup-token' and add it as a repo secret."
-            exit 1
-          fi
-          out="$(claude -p 'Reply with exactly: OK' --output-format json --max-turns 1 2>&1)" || true
-          if jq -e '.is_error == false' <<< "$out" >/dev/null 2>&1; then
-            echo "claude auth OK ($(jq -r '.result' <<< "$out" | head -c 40))"
-          else
-            echo "::error::claude auth failed: $(jq -r '.result // .' <<< "$out" 2>/dev/null | head -c 300)"
-            exit 1
-          fi
 
       - name: Gather PR context
         id: context
@@ -124,6 +103,24 @@ jobs:
           done
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check Claude auth token
+        if: ${{ steps.context.outputs.skip != 'true' }}
+        env:
+          # Token from 'claude setup-token'. Falls back to the ANTHROPIC_API_KEY secret, which currently holds that token.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
+          trimmed="$(printf '%s' "$tok" | tr -d '[:space:]')"
+          if [[ "${#trimmed}" -eq 0 ]]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty. Create one with 'claude setup-token' and add it as a repo secret."
+            exit 1
+          fi
+          if [[ "$trimmed" != sk-ant-oat* ]]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN does not start with sk-ant-oat; it may not be a valid 'claude setup-token' token."
+          fi
 
       - name: Run automated review
         id: review
@@ -186,8 +183,10 @@ jobs:
             exit "$rc"
           fi
 
+          # Every extracted item must match the schema exactly: rule_id/message strings,
+          # path/line nullable-typed, no extra keys.
           if ! extract_violations claude-review.json > violations.json 2>/dev/null \
-            || ! jq -e 'type == "array"' violations.json >/dev/null 2>&1; then
+            || ! jq -e 'type=="array" and all(.[]; (keys|sort)==["line","message","path","rule_id"] and (.rule_id|type)=="string" and (.message|type)=="string" and ((.path|type)=="string" or .path==null) and ((.line|type)=="number" or .line==null))' violations.json >/dev/null 2>&1; then
             echo "::error::Automated review output had no valid violations array. Raw claude-review.json follows."
             echo "::group::claude-review.json"
             cat claude-review.json

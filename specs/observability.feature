@@ -30,7 +30,8 @@ Feature: Review bot observability
   Scenario: Missing key does not break the review
     Given the repository secret "LANGWATCH_INGEST_KEY" is empty
     When the pipeline runs
-    Then the review still completes
+    Then telemetry is disabled
+    And the review still completes
     And no trace is exported
 
   Scenario: Self-hosted endpoint

@@ -85,12 +85,11 @@ The workflow expects these repository secrets:
 
 - `CLAUDE_CODE_OAUTH_TOKEN` — OAuth token for Claude Code authentication. Generate locally with `claude setup-token`, which prints a token starting with `sk-ant-oat01-…`. Paste this token value as the secret. If the token is stored under the legacy secret name `ANTHROPIC_API_KEY`, the workflow uses it as a fallback.
 - `SLACK_WEBHOOK_URL` — used to post violation notifications to Slack.
+- `LANGWATCH_INGEST_KEY` — optional; enables telemetry export, see [Telemetry (LangWatch)](#telemetry-langwatch) below.
 
 The GitHub token used for reviews and prerequisite thread checks comes from the built-in `GITHUB_TOKEN` secret.
 
 Claude Code is installed from the official `@anthropic-ai/claude-code` package at a pinned version. The reviewer uses the `opus` model alias from the dedicated agent profile.
-
-Add `LANGWATCH_INGEST_KEY` to repository secrets — LangWatch ingest key (`ik-lw-...`).
 
 ## Telemetry (LangWatch)
 
