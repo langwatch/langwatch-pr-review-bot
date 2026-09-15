@@ -90,7 +90,7 @@ The GitHub token used for reviews and prerequisite thread checks comes from the 
 
 Claude Code is installed from the official `@anthropic-ai/claude-code` package at a pinned version. The reviewer uses the `opus` model alias from the dedicated agent profile.
 
-Add `LANGWATCH_INGEST_KEY` to repository secrets (a LangWatch project API key, format `sk-lw-...`).
+Add `LANGWATCH_INGEST_KEY` to repository secrets — LangWatch ingest key (`ik-lw-...`).
 
 ## Telemetry (LangWatch)
 
@@ -98,7 +98,7 @@ Every review run exports full Claude Code OpenTelemetry data (traces, logs, metr
 
 Required secret:
 
-- `LANGWATCH_INGEST_KEY` — the LangWatch project API key (`sk-lw-...`) from the project settings page, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. The workflow sends it as `Authorization: Bearer`.
+- `LANGWATCH_INGEST_KEY` — a LangWatch **ingest key** (`ik-lw-...`, trace-write only) created in the project settings, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. A project API key (`sk-lw-...`) also works but grants more than needed; prefer the ingest key. The workflow sends it as `Authorization: Bearer`.
 
 The export is configured as job-level `env` in `.github/workflows/review.yml`. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
 
