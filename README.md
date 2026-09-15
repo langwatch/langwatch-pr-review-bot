@@ -90,6 +90,23 @@ The GitHub token used for reviews and prerequisite thread checks comes from the 
 
 Claude Code is installed from the official `@anthropic-ai/claude-code` package at a pinned version. The reviewer uses the `opus` model alias from the dedicated agent profile.
 
+Add `LANGWATCH_INGEST_KEY` to repository secrets (a LangWatch ingest key, format `ik-lw-...`).
+
+## Telemetry (LangWatch)
+
+Every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch.
+
+Required secret:
+
+- `LANGWATCH_INGEST_KEY` — a LangWatch ingest key (`ik-lw-...`). Create one in your LangWatch project settings.
+
+The export is configured as job-level `env` in `.github/workflows/review.yml`. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
+
+Docs:
+
+- https://langwatch.ai/docs/coding-agents/claude-code
+- https://code.claude.com/docs/en/monitoring-usage
+
 ## Review philosophy
 
 This bot is intentionally not a suggestion engine. It should not report cosmetic preferences or weak hypotheticals. When it catches a recurring real problem, add one concise rule to `REVIEW_RULES.md` and update the skill only when the workflow/instructions themselves need to change.
