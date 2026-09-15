@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch --no-tags --depth=1 origin "pull/${PR_NUMBER}/head"
+          git fetch --no-tags origin "pull/${PR_NUMBER}/head"
           git diff --no-ext-diff "${PR_BASE_SHA}...FETCH_HEAD" > pr.diff
 
           review_schema='{"type":"object","properties":{"violations":{"type":"array","items":{"type":"object","properties":{"rule_id":{"type":"string"},"message":{"type":"string"},"path":{"type":["string","null"]},"line":{"type":["integer","null"]}},"required":["rule_id","message","path","line"],"additionalProperties":false}}},"required":["violations"],"additionalProperties":false}'
