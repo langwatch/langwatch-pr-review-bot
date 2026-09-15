@@ -167,13 +167,17 @@ jobs:
             --input review-payload.json
 
           if [[ "$count" -gt 0 ]]; then
-            slack_message="PR review violations found: ${REPOSITORY}#${PR_NUMBER}\n${body}"
-            jq -n --arg text "$slack_message" '{text:$text}' > slack-payload.json
-            curl --fail --silent --show-error \
-              -X POST \
-              -H 'Content-Type: application/json' \
-              --data @slack-payload.json \
-              "${SLACK_WEBHOOK_URL:?SLACK_WEBHOOK_URL is required when violations are found}"
+            if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
+              slack_message="PR review violations found: ${REPOSITORY}#${PR_NUMBER}\n${body}"
+              jq -n --arg text "$slack_message" '{text:$text}' > slack-payload.json
+              curl --fail --silent --show-error \
+                -X POST \
+                -H 'Content-Type: application/json' \
+                --data @slack-payload.json \
+                "$SLACK_WEBHOOK_URL"
+            else
+              echo "SLACK_WEBHOOK_URL is not configured; skipping Slack notification."
+            fi
             echo 'review_failed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'review_failed=false' >> "$GITHUB_OUTPUT"
