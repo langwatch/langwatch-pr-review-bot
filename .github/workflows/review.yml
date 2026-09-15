@@ -113,7 +113,6 @@ jobs:
         run: |
           set -euo pipefail
           tok="${CLAUDE_CODE_OAUTH_TOKEN:-}"
-          echo "token length=${#tok}"
           if [[ "${#tok}" -eq 0 ]]; then
             echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret is empty. Create one with 'claude setup-token' and add it as a repo secret."
             exit 1
@@ -121,9 +120,6 @@ jobs:
           if [[ "$tok" =~ [[:space:]] ]]; then
             echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret token contains whitespace; re-paste the secret."
             exit 1
-          fi
-          if [[ "$tok" != sk-ant-oat* ]]; then
-            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN does not start with sk-ant-oat; it may not be a valid 'claude setup-token' token."
           fi
 
       - name: Run automated review
@@ -148,12 +144,8 @@ jobs:
 
           review_schema='{"type":"object","properties":{"violations":{"type":"array","items":{"type":"object","properties":{"rule_id":{"type":"string"},"message":{"type":"string"},"path":{"type":["string","null"]},"line":{"type":["integer","null"]}},"required":["rule_id","message","path","line"],"additionalProperties":false}}},"required":["violations"],"additionalProperties":false}'
 
-          # `claude -p --json-schema` does not reliably populate `.structured_output`;
-          # `.result` can also be prose with the JSON in a fenced block. Try, in order:
-          # structured_output, `.result` as raw JSON, a ```json fence in `.result`.
-          # CI run 34947688605 observed `claude -p --json-schema` returning prose with
-          # a fenced ```json block, so the third tier is an observed shape, not
-          # speculative. Every item is schema-validated afterward regardless of tier.
+          # Handles three output shapes: structured_output, a JSON-string in `.result`,
+          # or a fenced ```json block inside `.result`. Every item is schema-validated below.
           extract_violations() {
             local json="$1" out
             out="$(jq -c '.structured_output.violations' "$json" 2>/dev/null)" && [[ -n "$out" && "$out" != "null" ]] && { echo "$out"; return 0; }
