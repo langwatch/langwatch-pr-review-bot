@@ -1,9 +1,8 @@
 # PR Review Rules
 
-The reviewer rejects **violations**, not preferences. A rule should be enforced only when there is enough evidence to identify a real violation.
+The reviewer rejects **violations**, not preferences. A rule is enforced only when there is enough evidence to identify a real violation.
 
 ## Intent & Decisions
-
 - PR description clearly explains why the PR exists
 - The stated problem is valid and sufficiently justified
 - The proposed solution addresses the stated problem
@@ -15,14 +14,12 @@ The reviewer rejects **violations**, not preferences. A rule should be enforced 
 - If intent, solution, or AC cannot be justified, reject the PR
 
 ## Correctness
-
 - No bugs
 - All errors are handled appropriately
 - Real edge cases are handled
 - No unintended breaking changes
 
 ## Code Quality
-
 - No dead code or cruft
 - No redundant code
 - No unnecessary complexity
@@ -38,7 +35,6 @@ The reviewer rejects **violations**, not preferences. A rule should be enforced 
 - No Clean Code violations
 
 ## Architecture
-
 - Composition over inheritance
 - No SRP violations
 - No SOLID violations
@@ -50,19 +46,16 @@ The reviewer rejects **violations**, not preferences. A rule should be enforced 
 - One primary export per file
 
 ## Testing
-
 - All logic is tested
 - Tests test behavior, not implementation
 - No mocks
 - Matching `.feature` file
 
 ## Security & Operations
-
 - Security concerns addressed
 - Logging / observability appropriate
 
 ## Comments
-
 - Comments are useful and necessary
 - No LLM-generated comment noise
 - No historical narration of removed or changed code
