@@ -31,41 +31,32 @@ Feature: Automated PR review
     Then the PR reviewer status check passes
     And the bot does not add violation comments
 
-  Scenario: Auth token from CLAUDE_CODE_OAUTH_TOKEN
-    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is set
-    When the pipeline checks the Claude auth token
-    Then the token is accepted
-    And the PR reviewer proceeds
+  Scenario: Missing reviewer credentials fail before any review
+    Given the reviewer credentials are missing
+    When the pipeline runs
+    Then the run fails before any review with a clear error
 
-  Scenario: Empty auth token fails before any review
-    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is empty
-    When the pipeline checks the Claude auth token
-    Then the check fails with a clear error
-    And no review is attempted
+  Scenario: Findings are accepted as a JSON document
+    Given the PR reviewer returns its findings as a JSON document
+    And the findings match the review schema
+    When the pipeline extracts the findings
+    Then the findings are accepted
 
-  Scenario: Violations are accepted from a JSON-string result
-    Given the "Run automated review" step returns violations as a JSON-encoded string in "result"
-    And every violation item matches the schema
-    When the pipeline extracts violations
-    Then the violations are accepted
+  Scenario: Findings are accepted from a JSON block within prose
+    Given the PR reviewer returns its findings as text containing a JSON block
+    And the findings match the review schema
+    When the pipeline extracts the findings
+    Then the findings are accepted
 
-  Scenario: Violations are accepted from a fenced JSON block in prose
-    Given the "Run automated review" step returns violations inside a fenced ```json``` block within prose in "result"
-    And every violation item matches the schema
-    When the pipeline extracts violations
-    Then the violations are accepted
+  Scenario: Findings that do not match the schema fail the run
+    Given the PR reviewer returns findings that do not match the review schema
+    When the pipeline extracts the findings
+    Then the run fails
+    And the raw reviewer output is shown in the log
 
-  Scenario: Malformed violations fail extraction
-    Given the "Run automated review" step returns an output whose extracted items do not match the schema
-    When the pipeline extracts violations
-    Then the extraction step fails
-    And the raw output is dumped to the log
-
-  Scenario: Review generation fails when claude -p exits non-zero
+  Scenario: The PR reviewer fails to complete
     Given the pull request targets "main"
     And all prerequisite pipeline checks are green
-    When the "Run automated review" step runs claude -p
-    And claude -p exits with a non-zero code
-    Then the exit code, stderr, and the raw output file are printed to the log
-    And the JSON summary is printed to the log
-    And the step fails with that exit code
+    When the PR reviewer fails to complete
+    Then the run fails
+    And the failure details are shown in the log

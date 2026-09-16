@@ -5,40 +5,26 @@ Feature: Review bot observability
   So that I can inspect, debug and measure every automated review
 
   Background:
-    Given the workflow ".github/workflows/review.yml" sets job-level OpenTelemetry env pointing at "https://app.langwatch.ai/api/otel"
+    Given telemetry export to LangWatch is configured
 
-  Scenario: A review run exports a trace
-    Given the repository secret "LANGWATCH_INGEST_KEY" is set
-    And the "Run automated review" step runs "claude -p"
-    When the step completes
-    Then a trace appears in the LangWatch project with service name "pr-review-bot"
-    And the trace input contains the review prompt
+  Scenario: A review run is recorded as a trace
+    When the PR reviewer evaluates the pull request
+    Then a trace for the review run appears in the LangWatch project
+    And the trace includes the review prompt
 
-  Scenario: The trace carries full detail
-    Given the repository secret "LANGWATCH_INGEST_KEY" is set
-    And a review run has exported a trace
-    Then the trace includes log records for the user prompt
-    And the trace includes log records for assistant responses
-    And the trace includes log records for tool calls with tool content
-    And the trace includes log records for raw API bodies
-    And the trace includes metrics for tokens and cost
+  Scenario: The trace carries full conversation detail
+    When the PR reviewer evaluates the pull request
+    Then the trace includes the prompts and responses exchanged
+    And the trace includes the tool calls made and their content
+    And the trace includes token and cost metrics
 
-  Scenario: The brief step is also traced
-    Given the repository secret "LANGWATCH_INGEST_KEY" is set
-    And the "Generate human review brief" step runs
-    When the step completes
-    Then it exports its own trace to the same LangWatch project
+  Scenario: The human brief generation is recorded too
+    Given the automated PR review has completed
+    When the PR brief workflow runs
+    Then a trace for the brief generation appears in the LangWatch project
 
-  Scenario: Missing key does not break the review
-    Given the repository secret "LANGWATCH_INGEST_KEY" is empty
+  Scenario: Telemetry export is not configured
+    Given telemetry export to LangWatch is not configured
     When the pipeline runs
-    Then telemetry is disabled
-    And the review still completes
-    And no trace is exported
-
-  Scenario: Self-hosted endpoint
-    Given the repository secret "LANGWATCH_INGEST_KEY" is set
-    And "OTEL_EXPORTER_OTLP_ENDPOINT" is changed to a self-hosted LangWatch instance
-    When a review run exports a trace
-    Then the trace is exported to the self-hosted endpoint
-    And no other configuration changes
+    Then the review runs unchanged
+    And nothing is exported

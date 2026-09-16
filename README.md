@@ -73,7 +73,7 @@ The trusted Claude-specific instructions live on the trusted base in:
 
 The review job checks out the PR's base SHA, never the PR-controlled tree. It fetches the PR ref only to compute a diff, so PR changes cannot replace the reviewer configuration before evaluation.
 
-The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the schema output with `jq`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
+The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
 
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
 
