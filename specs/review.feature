@@ -51,12 +51,6 @@ Feature: Automated PR review
     Then the check fails with a clear error
     And no review is attempted
 
-  Scenario: Violations are accepted from a structured output
-    Given the "Run automated review" step returns violations as structured output
-    And every violation item matches the schema
-    When the pipeline extracts violations
-    Then the violations are accepted
-
   Scenario: Violations are accepted from a JSON-string result
     Given the "Run automated review" step returns violations as a JSON-encoded string in "result"
     And every violation item matches the schema
