@@ -174,7 +174,7 @@ jobs:
           fi
 
           # Every extracted item must match the review schema itself, validated with a
-          # real JSON Schema validator rather than a hand-rolled keys/types check.
+          # real JSON Schema validator.
           printf '%s' "$review_schema" > review-schema.json
           if ! extract_violations claude-review.json > violations.json 2>/dev/null \
             || ! jq -e 'type=="array"' violations.json >/dev/null 2>&1; then
@@ -186,7 +186,7 @@ jobs:
           fi
 
           jq -c '{"violations": .}' violations.json > review-output.json
-          if ! npx --yes ajv-cli@5 validate -s review-schema.json -d review-output.json --strict=false; then
+          if ! npx --yes ajv-cli@5.0.0 validate -s review-schema.json -d review-output.json --strict=false; then
             echo "::error::Automated review output failed schema validation. Raw claude-review.json follows."
             echo "::group::claude-review.json"
             cat claude-review.json
