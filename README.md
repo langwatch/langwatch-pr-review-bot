@@ -83,12 +83,28 @@ The generated brief is written to `pr-review-brief.md`, added to the GitHub Acti
 
 The workflow expects these repository secrets:
 
-- `ANTHROPIC_API_KEY` — used by Claude Code.
+- `CLAUDE_CODE_OAUTH_TOKEN` — OAuth token for Claude Code authentication. Generate locally with `claude setup-token`, which prints a token starting with `sk-ant-oat01-…`. Paste this token value as the secret. If the token is stored under the legacy secret name `ANTHROPIC_API_KEY`, the workflow uses it as a fallback.
 - `SLACK_WEBHOOK_URL` — used to post violation notifications to Slack.
+- `LANGWATCH_INGEST_KEY` — optional; when set, enables telemetry export, see [Telemetry (LangWatch)](#telemetry-langwatch) below.
 
 The GitHub token used for reviews and prerequisite thread checks comes from the built-in `GITHUB_TOKEN` secret.
 
 Claude Code is installed from the official `@anthropic-ai/claude-code` package at a pinned version. The reviewer uses the `opus` model alias from the dedicated agent profile.
+
+## Telemetry (LangWatch)
+
+When `LANGWATCH_INGEST_KEY` is set, every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch. Without it, telemetry is disabled and the review runs unchanged.
+
+Secret (optional):
+
+- `LANGWATCH_INGEST_KEY` — a LangWatch **ingest key** (`ik-lw-...`, trace-write only) created in the project settings, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. A project API key (`sk-lw-...`) also works but grants more than needed; prefer the ingest key. The workflow sends it as `Authorization: Bearer`.
+
+The export is configured as job-level `env` in `.github/workflows/review.yml`. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
+
+Docs:
+
+- https://langwatch.ai/docs/coding-agents/claude-code
+- https://code.claude.com/docs/en/monitoring-usage
 
 ## Review philosophy
 
