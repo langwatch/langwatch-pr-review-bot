@@ -173,11 +173,21 @@ jobs:
             exit "$rc"
           fi
 
-          # Every extracted item must match the schema exactly: rule_id/message strings,
-          # path/line nullable-typed, no extra keys.
+          # Every extracted item must match the review schema itself, validated with a
+          # real JSON Schema validator rather than a hand-rolled keys/types check.
+          printf '%s' "$review_schema" > review-schema.json
           if ! extract_violations claude-review.json > violations.json 2>/dev/null \
-            || ! jq -e 'type=="array" and all(.[]; (keys|sort)==["line","message","path","rule_id"] and (.rule_id|type)=="string" and (.message|type)=="string" and ((.path|type)=="string" or .path==null) and ((.line|type)=="number" or .line==null))' violations.json >/dev/null 2>&1; then
+            || ! jq -e 'type=="array"' violations.json >/dev/null 2>&1; then
             echo "::error::Automated review output had no valid violations array. Raw claude-review.json follows."
+            echo "::group::claude-review.json"
+            cat claude-review.json
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          jq -c '{"violations": .}' violations.json > review-output.json
+          if ! npx --yes ajv-cli@5 validate -s review-schema.json -d review-output.json --strict=false; then
+            echo "::error::Automated review output failed schema validation. Raw claude-review.json follows."
             echo "::group::claude-review.json"
             cat claude-review.json
             echo "::endgroup::"
