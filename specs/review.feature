@@ -31,22 +31,14 @@ Feature: Automated PR review
     Then the PR reviewer status check passes
     And the bot does not add violation comments
 
-  Scenario: Auth token resolves from the primary secret
+  Scenario: Auth token from CLAUDE_CODE_OAUTH_TOKEN
     Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is set
-    When the pipeline checks the Claude auth token
-    Then the token is accepted
-    And the PR reviewer proceeds
-
-  Scenario: Auth token falls back to the legacy secret
-    Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is empty
-    And the repository secret "ANTHROPIC_API_KEY" is set
     When the pipeline checks the Claude auth token
     Then the token is accepted
     And the PR reviewer proceeds
 
   Scenario: Empty auth token fails before any review
     Given the repository secret "CLAUDE_CODE_OAUTH_TOKEN" is empty
-    And the repository secret "ANTHROPIC_API_KEY" is empty
     When the pipeline checks the Claude auth token
     Then the check fails with a clear error
     And no review is attempted
@@ -68,3 +60,12 @@ Feature: Automated PR review
     When the pipeline extracts violations
     Then the extraction step fails
     And the raw output is dumped to the log
+
+  Scenario: Review generation fails when claude -p exits non-zero
+    Given the pull request targets "main"
+    And all prerequisite pipeline checks are green
+    When the "Run automated review" step runs claude -p
+    And claude -p exits with a non-zero code
+    Then the exit code, stderr, and the raw output file are printed to the log
+    And the JSON summary is printed to the log
+    And the step fails with that exit code

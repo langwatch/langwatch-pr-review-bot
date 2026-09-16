@@ -28,8 +28,8 @@ jobs:
     if: ${{ needs.prerequisites.result == 'success' }}
     runs-on: ubuntu-latest
     env:
-      # Token from 'claude setup-token'. Falls back to the ANTHROPIC_API_KEY secret, which currently holds that token.
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_API_KEY }}
+      # Token from 'claude setup-token'.
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       # LangWatch OpenTelemetry — full Claude Code telemetry export.
       # Disabled when LANGWATCH_INGEST_KEY is not configured, so a missing key never breaks the review.
       # https://langwatch.ai/docs/coding-agents/claude-code
