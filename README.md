@@ -11,7 +11,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 ## Acceptance criteria
 
 - Review rules live in the repository and are applied consistently.
-- The review skill, agent, and rules are read from the base branch and cannot be replaced by a PR. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
+- The review skill, agent, and rules are loaded from the `langwatch/langwatch-pr-review-bot` repository (at `bot_ref`) and cannot be replaced by a PR. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
@@ -23,6 +23,53 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Reviews are exhaustive in one pass: every substantiated violation is reported, each citing `file:line` and the rule.
 - The reviewer's session is remembered across runs on the same PR, so a follow-up review re-checks its earlier findings instead of re-deriving and reversing them.
 - After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill and generates the human review brief from its template.
+
+## Install in your repository
+
+The bot is a reusable workflow. Your repository does **not** need `REVIEW_RULES.md` or any `.claude/` files — the bot repo owns the rules, agent, and skills. You customize only through workflow inputs.
+
+Add `.github/workflows/review.yml` to your repo (copy from [`install/review.yml`](install/review.yml)):
+
+```yaml
+name: PR Review Bot
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  review:
+    uses: langwatch/langwatch-pr-review-bot/.github/workflows/review.yml@main
+    with:
+      review_label: ai-review
+      slack_notify: false
+      extra_instructions: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      LANGWATCH_INGEST_KEY: ${{ secrets.LANGWATCH_INGEST_KEY }}
+```
+
+Keep `labeled` in the event types so applying the label triggers a run.
+
+### Secrets
+
+| Secret | Required | Purpose |
+| --- | --- | --- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | yes | Claude Code auth. Generate with `claude setup-token` (starts with `sk-ant-oat01-…`). |
+| `LANGWATCH_INGEST_KEY` | no | Enables LangWatch telemetry export. See [Telemetry](#telemetry-langwatch). |
+| `SLACK_WEBHOOK_URL` | no | Slack notification target for blocking findings. |
+
+### Inputs
+
+| Input | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `review_label` | string | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
+| `slack_notify` | boolean | `true` | Post a Slack notification on blocking findings (needs `SLACK_WEBHOOK_URL`). |
+| `extra_instructions` | string | `""` | Repo-specific guidance appended to the review prompt as trusted instructions. |
+| `bot_ref` | string | `"main"` | Ref of `langwatch/langwatch-pr-review-bot` to load rules, agent, and skills from. |
+
+Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `main`.
 
 ## How it works
 
@@ -37,7 +84,7 @@ repository prerequisites
         +--> block if HUMAN review threads are unresolved
         |
         v
-trusted base checkout
+bot repo checkout (trusted rules/agent/skills)
         |
         +--> restore cached Claude session for this PR
         |
@@ -73,14 +120,14 @@ human review brief
 
 The review rules live in [`REVIEW_RULES.md`](REVIEW_RULES.md).
 
-The trusted Claude-specific instructions live on the trusted base in:
+The trusted Claude-specific instructions live in the bot repository, loaded via the user setting source:
 
 - `.claude/skills/pr-review/SKILL.md` — violation-focused review methodology
 - `.claude/skills/pr-brief/SKILL.md` — human review brief workflow
 - `.claude/skills/pr-brief/TEMPLATE.md` — source of truth for brief structure
 - `.claude/agents/pr-reviewer.md` — dedicated read-only subagent profile with access to both skills
 
-The review job checks out the PR's base SHA, never the PR-controlled tree, so the review skill, agent, and `REVIEW_RULES.md` cannot be replaced by a PR. It fetches the PR ref only to compute a diff. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
+The review job checks out the bot repository at `bot_ref` and loads its agent and skills through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `.pr-review-bot/REVIEW_RULES.md`. The PR working tree is checked out as the code under review and treated as untrusted evidence. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
 
 The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
 

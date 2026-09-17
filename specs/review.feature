@@ -58,3 +58,10 @@ Feature: Automated PR review
     When the PR reviewer evaluates the updated pull request
     Then each earlier finding is marked resolved, still open, or superseded
     And any new findings are reported
+
+  Scenario: Installed in another repository via the reusable workflow
+    Given a repository that installs the reviewer with only a thin caller workflow
+    And the caller repository has no REVIEW_RULES.md and no .claude files
+    When the PR reviewer runs through the reusable workflow
+    Then the rules, agent, and skills come from the bot repository
+    And the target repository customizes behavior only through workflow inputs
