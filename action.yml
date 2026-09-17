@@ -194,7 +194,6 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
-        GITHUB_WORKSPACE: ${{ github.workspace }}
       run: |
         set -euo pipefail
         # ACTION_PATH == GITHUB_WORKSPACE means the action is loaded from the PR
@@ -238,7 +237,7 @@ runs:
         # actions/checkout with fetch-depth: 0 already has full history, including the
         # base sha object, so no extra fetch is needed before the three-dot diff.
         if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
-          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with 'ref: \${{ github.event.pull_request.head.sha }}' and 'fetch-depth: 0' before this action."
+          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
           exit 1
         fi
         git diff --no-ext-diff "${PR_BASE_SHA}...${PR_HEAD_SHA}" > pr.diff
