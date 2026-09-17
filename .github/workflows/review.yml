@@ -4,7 +4,7 @@ name: PR Review Bot
 # Inputs are left at their defaults (always-on, Slack enabled, base_branch=main).
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
