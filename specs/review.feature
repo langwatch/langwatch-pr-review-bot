@@ -77,8 +77,25 @@ Feature: Automated PR review
   Scenario: Findings outside the diff are reported in the body, not inline
     Given the PR reviewer reports a finding on a line outside the pull request diff
     When the review is posted
-    Then the finding appears in the review body marked "(outside diff)"
+    Then the finding appears in the review body under "Outside the diff"
     And the finding is not posted as an inline comment
+
+  Scenario: Inline comment states problem and fix only
+    Given the PR reviewer reports a blocking finding anchored to a diff line
+    When the review is posted
+    Then the inline comment states the priority, the problem in one sentence, and the fix in one sentence
+    And the inline comment contains no history narration, rule citation, or praise
+
+  Scenario: Review body summarises for humans and does not repeat inline findings
+    Given the PR reviewer reports findings anchored to diff lines
+    When the review is posted
+    Then the review body gives a plain-English overview and a blocking and non-blocking count
+    And the review body does not repeat the inline findings
+
+  Scenario: Review is signed @LangWatchReviewBot
+    Given the PR reviewer posts any review
+    When the review is posted
+    Then the review body begins with the signature "@LangWatchReviewBot"
 
   Scenario: Installed in another repository as a GitHub Action
     Given a repository that installs the reviewer with only a thin caller workflow

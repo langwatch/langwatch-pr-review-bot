@@ -151,6 +151,10 @@ The action itself owns the gate and orchestration. It embeds a small Python diff
 
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
 
+### What it posts
+
+The review targets two audiences with no overlap. **Inline comments are for the agent that fixes the PR:** one per finding, anchored to a diff line, formatted as `**[P0 · blocking]** <what is wrong>` followed by `Fix: <the concrete change>` — no history narration, no rule citations, no praise. **The review body is for humans:** it opens with `**@LangWatchReviewBot**`, gives a 2-3 sentence plain-English overview and a `**N blocking · M non-blocking**` count (or `**No blocking findings.**` when clean), and lists only findings that fell outside the diff under `Outside the diff:`. The body never repeats the inline findings.
+
 ### Session memory across runs
 
 Claude Code stores each session transcript under `~/.claude/projects`. The workflow caches that directory with `actions/cache`, keyed by PR (`claude-session-<repo_id>-pr-<N>-<run_id>`, with a `-pr-<N>-` restore prefix). The review step also writes the run's `session_id` to a small file inside the cached directory. On the next run for the same PR, if that id and its transcript are present, the review resumes with `claude -p --resume "$SESSION_ID"`; otherwise it starts fresh. The save step runs `if: always()`, so the conversation persists even when blocking findings fail the job.
