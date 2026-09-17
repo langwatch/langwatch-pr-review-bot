@@ -33,6 +33,11 @@ Feature: Automated PR review
     And the PR reviewer status check passes
     And each finding carries a priority and states whether it is blocking
 
+  Scenario: Reviewer output is accepted in either supported shape
+    Given the PR reviewer returns valid findings, either as plain JSON or inside prose
+    When the pipeline extracts the findings
+    Then the findings are accepted
+
   Scenario: Reviewer output cannot be used
     Given all prerequisite checks are green
     When the PR reviewer fails to complete or returns findings in an unusable shape
