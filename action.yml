@@ -473,10 +473,11 @@ runs:
         still_open_count="$(jq '[.[] | select(.status == "open" and (.url // "") != "")] | length' findings.json)"
 
         # Body list renderer for outside-diff findings: NEW findings that could not be
-        # inlined AND still-open findings with no stored url (also outside the diff), so
-        # findings that would otherwise block invisibly are always listed in the body.
-        # "- **[P#]** `path` — summary Fix: fix". path renders "(no file)" when null.
-        outside_filter='.[] | select((.status == "new" and .inline != true) or (.status == "open" and (.url // "") == "")) | "- **[" + .priority + "]** " + (if .path then ("`" + .path + "`") else "(no file)" end) + " — " + .summary + " Fix: " + .fix'
+        # inlined AND still-open findings outside the diff with no stored url, so findings
+        # that would otherwise block invisibly are always listed in the body. Still-open
+        # findings with a url are shown only in the "Still open" navigation line.
+        # "- **[P#]** `path` — summary · Fix: fix". path renders "(no file)" when null.
+        outside_filter='.[] | select((.status == "new" and .inline != true) or (.status == "open" and .inline != true and (.url // "") == "")) | "- **[" + .priority + "]** " + (if .path then ("`" + .path + "`") else "(no file)" end) + " — " + .summary + " · Fix: " + .fix'
         outside_count="$(jq '[.[] | select((.status == "new" and .inline != true) or (.status == "open" and (.url // "") == ""))] | length' findings.json)"
 
         if [[ "$count" -eq 0 ]]; then
@@ -637,7 +638,7 @@ runs:
         } > pr-review-brief-comment.md
 
         brief_comment_id="$(gh api "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-          --jq '[.[] | select(.body | contains("<!-- langwatch-review-brief -->"))] | first | .id // empty')"
+          | jq -s 'add // [] | [.[] | select(.user.type == "Bot" and .body | contains("<!-- langwatch-review-brief -->"))] | first | .id // empty')"
 
         if [[ -n "$brief_comment_id" ]]; then
           gh api \

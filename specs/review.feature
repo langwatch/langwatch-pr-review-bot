@@ -87,6 +87,17 @@ Feature: Automated PR review
     Then the finding appears in the review body under "Outside the diff" alongside any new outside-diff findings
     And the still-open finding gets no new inline comment
 
+  Scenario: Inline comments carry a hidden finding id
+    Given the PR reviewer reports a finding anchored to a diff line
+    When the review is posted
+    Then the inline comment contains a hidden HTML comment with the finding id
+    And the id marker format is "<!-- id:<slug> -->"
+
+  Scenario: Still-open findings link to their original inline comment
+    Given a previous review posted an inline comment for a finding
+    When the finding is still open
+    Then the review body links to that inline comment under "Still open"
+
   Scenario: Inline comment states problem and fix only
     Given the PR reviewer reports a blocking finding anchored to a diff line
     When the review is posted
@@ -127,6 +138,12 @@ Feature: Automated PR review
     And an existing brief comment is updated in place instead of posting a new one
     And the comment begins with the signature "@LangWatchReviewBot" and the head sha
     And the brief is also uploaded as a workflow artifact
+
+  Scenario: Brief comment is located by bot author and marker
+    Given a previous brief comment exists
+    When the pipeline searches for the brief comment to update
+    Then it locates the comment by both the bot author (user.type == "Bot") and the marker text
+    And a comment with the marker posted by a human is not updated
 
   Scenario: Review is signed @LangWatchReviewBot
     Given the PR reviewer posts any review
