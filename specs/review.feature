@@ -59,6 +59,27 @@ Feature: Automated PR review
     Then each earlier finding is marked resolved, still open, or superseded
     And any new findings are reported
 
+  Scenario: A fork pull request is skipped
+    Given a pull request opened from a fork
+    When the pipeline runs
+    Then the PR reviewer does not run
+
+  Scenario: A configured label gates the review
+    Given the reviewer is configured with a review label
+    When a pull request does not carry that label
+    Then the PR reviewer does not run
+
+  Scenario: Slack notification is suppressed when disabled
+    Given the reviewer is configured with slack_notify false
+    When the PR reviewer finds one or more blocking violations
+    Then no notification is posted to Slack
+
+  Scenario: Findings outside the diff are reported in the body, not inline
+    Given the PR reviewer reports a finding on a line outside the pull request diff
+    When the review is posted
+    Then the finding appears in the review body marked "(outside diff)"
+    And the finding is not posted as an inline comment
+
   Scenario: Installed in another repository via the reusable workflow
     Given a repository that installs the reviewer with only a thin caller workflow
     And the caller repository has no REVIEW_RULES.md and no .claude files

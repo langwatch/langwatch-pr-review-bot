@@ -15,7 +15,14 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
-- PRs targeting `main` are reviewed only after repository prerequisites pass and there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
+- PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
+- The bot installs as a reusable `workflow_call` workflow; a target repo adds only a thin caller and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
+- An optional label gate (`review_label`) restricts the review to PRs carrying that label; empty means always on.
+- Fork PRs are skipped, because secrets are unavailable there.
+- Slack notification is opt-out: `slack_notify: false` suppresses it, and only an explicit false disables it.
+- `extra_instructions` appends caller-workflow guidance to the review prompt; it is reviewed by humans as a workflow change.
+- `bot_ref` pins the bot repo ref that supplies the rules, agent, and skills.
+- Inline review comments are posted only for findings inside the PR diff; findings outside the diff are listed in the review body and marked "(outside diff)".
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A clean review posts `APPROVE`.
 - Blocking violations post `REQUEST_CHANGES` with inline comments, notify Slack, and fail the review job.
@@ -68,6 +75,7 @@ Keep `labeled` in the event types so applying the label triggers a run.
 | `slack_notify` | boolean | `true` | Post a Slack notification on blocking findings (needs `SLACK_WEBHOOK_URL`). |
 | `extra_instructions` | string | `""` | Repo-specific guidance appended to the review prompt as trusted instructions. |
 | `bot_ref` | string | `"main"` | Ref of `langwatch/langwatch-pr-review-bot` to load rules, agent, and skills from. |
+| `base_branch` | string | `"main"` | Only review PRs whose base branch is this branch. |
 
 Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `main`.
 
@@ -77,9 +85,9 @@ Fork PRs are skipped automatically (secrets are unavailable there). The reviewer
 PR opened / updated
         |
         v
-repository prerequisites
+context checks
         |
-        +--> skip unless base branch is main
+        +--> skip unless base branch matches base_branch (default main)
         |
         +--> block if HUMAN review threads are unresolved
         |
@@ -129,7 +137,7 @@ The trusted Claude-specific instructions live in the bot repository, loaded via 
 
 The review job checks out the bot repository at `bot_ref` and loads its agent and skills through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `.pr-review-bot/REVIEW_RULES.md`. The PR working tree is checked out as the code under review and treated as untrusted evidence. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
 
-The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
+The workflow itself owns the gate and orchestration. It embeds a small Python diff-parsing helper but no application layer: GitHub Actions runs the context checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
 
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
 

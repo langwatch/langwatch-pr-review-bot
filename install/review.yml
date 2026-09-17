@@ -16,6 +16,8 @@ jobs:
       review_label: ai-review
       slack_notify: false
       extra_instructions: ""
+      # base_branch: main  # only review PRs targeting this branch (default: main)
+      # bot_ref: main       # pin the bot repo ref that supplies rules, agent, skills
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       LANGWATCH_INGEST_KEY: ${{ secrets.LANGWATCH_INGEST_KEY }}

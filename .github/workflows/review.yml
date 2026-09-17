@@ -24,6 +24,10 @@ on:
         description: 'Ref of langwatch/langwatch-pr-review-bot to load rules, agent, and skills from.'
         type: string
         default: "main"
+      base_branch:
+        description: 'Only review PRs whose base branch is this branch.'
+        type: string
+        default: "main"
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
@@ -83,11 +87,10 @@ jobs:
           ref: ${{ inputs.bot_ref || 'main' }}
           path: .pr-review-bot
 
-      # Load the trusted agent and skills into the USER setting source (~/.claude).
-      # The review then runs with --setting-sources user, which loads these but
-      # excludes the target repo's own project/local .claude settings and hooks.
-      # This is the "always works" approach; --setting-sources is what keeps the
-      # PR-controlled working tree from replacing the rules/agent/skills or injecting hooks.
+      # Load the trusted agent and skills into the USER setting source (~/.claude) so the
+      # review can run with --setting-sources user. See the trust explanation on the
+      # "Run automated review" step below for how this isolates the reviewer from the
+      # PR-controlled working tree.
       - name: Load trusted rules, agent, and skills from the bot repo
         shell: bash
         run: |
@@ -117,15 +120,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Empty on the pull_request trigger, so it defaults to main.
+          BASE_BRANCH: ${{ inputs.base_branch || 'main' }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           REPOSITORY_NAME: ${{ github.event.repository.name }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "$PR_BASE_REF" != "main" ]]; then
+          if [[ "$PR_BASE_REF" != "$BASE_BRANCH" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "PR does not target main; reviewer does not run."
+            echo "PR does not target $BASE_BRANCH; reviewer does not run."
             exit 0
           fi
 
@@ -187,9 +192,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # Empty (falsy) on the pull_request trigger, so Slack defaults to on there;
-          # on workflow_call it is the caller's slack_notify boolean.
-          SLACK_NOTIFY: ${{ inputs.bot_ref == '' && 'true' || inputs.slack_notify }}
+          # On a direct pull_request event inputs.slack_notify is empty, so Slack defaults
+          # to on; on workflow_call only an explicit false disables it. GitHub coerces both
+          # '' and false to 0, so this compares the string form and only 'false' opts out.
+          SLACK_NOTIFY: ${{ format('{0}', inputs.slack_notify) == 'false' && 'false' || 'true' }}
           EXTRA_INSTRUCTIONS: ${{ inputs.extra_instructions }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -201,8 +207,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch --no-tags origin "pull/${PR_NUMBER}/head"
-          git diff --no-ext-diff "${PR_BASE_SHA}...FETCH_HEAD" > pr.diff
+          # The PR head is checked out at head.sha with fetch-depth 0, so its full history
+          # is local. The three-dot diff needs the base sha object; fetch only it when the
+          # base branch has advanced past what head can reach.
+          if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth 1 origin "${PR_BASE_SHA}"
+          fi
+          git diff --no-ext-diff "${PR_BASE_SHA}...${PR_HEAD_SHA}" > pr.diff
 
           # Build the set of (path, RIGHT-side line) pairs GitHub will accept an inline
           # comment on: every line present in a diff hunk (added '+' lines and unchanged
@@ -291,8 +302,9 @@ jobs:
           # points the reviewer at the trusted .pr-review-bot/REVIEW_RULES.md.
           rules_path='.pr-review-bot/REVIEW_RULES.md'
 
-          # Repo-specific guidance from the caller workflow is trusted (it comes from the
-          # install workflow, not from the PR). Appended only when non-empty.
+          # extra_instructions is caller-workflow content. On a same-repo pull_request it is
+          # PR-controlled like the workflow file itself, and is reviewed by humans as a
+          # workflow change. Appended only when non-empty.
           extra_block=""
           if [[ -n "${EXTRA_INSTRUCTIONS:-}" ]]; then
             extra_block=" Repo-specific guidance from the trusted caller workflow (not from the PR): ${EXTRA_INSTRUCTIONS}"
@@ -493,7 +505,7 @@ jobs:
           } > brief-input.txt
 
           rc=0
-          claude -p 'Continue the current PR-review session and run the pr-brief skill now. Read and follow the pr-brief skill TEMPLATE.md. Generate only the human review brief in markdown; do not perform a second code review and do not add findings.' \
+          claude -p 'Continue the current PR-review session and run the pr-brief skill now. Read and follow .pr-review-bot/.claude/skills/pr-brief/TEMPLATE.md. Generate only the human review brief in markdown; do not perform a second code review and do not add findings.' \
             --continue \
             --agent pr-reviewer \
             --setting-sources user \
