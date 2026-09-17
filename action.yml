@@ -478,7 +478,6 @@ runs:
         # findings with a url are shown only in the "Still open" navigation line.
         # "- **[P#]** `path` — summary · Fix: fix". path renders "(no file)" when null.
         outside_filter='.[] | select((.status == "new" and .inline != true) or (.status == "open" and .inline != true and (.url // "") == "")) | "- **[" + .priority + "]** " + (if .path then ("`" + .path + "`") else "(no file)" end) + " — " + .summary + " · Fix: " + .fix'
-        outside_count="$(jq '[.[] | select((.status == "new" and .inline != true) or (.status == "open" and (.url // "") == ""))] | length' findings.json)"
 
         if [[ "$count" -eq 0 ]]; then
           body="${header}"$'\n\n''**No blocking findings.**'
@@ -491,9 +490,10 @@ runs:
         if [[ "$still_open_count" -gt 0 ]]; then
           body+=$'\n'"Still open: $(jq -r "$still_open_filter" findings.json)"
         fi
-        if [[ "$outside_count" -gt 0 ]]; then
+        outside_list="$(jq -r "$outside_filter" findings.json)"
+        if [[ -n "$outside_list" ]]; then
           body+=$'\n\nOutside the diff:\n'
-          body+="$(jq -r "$outside_filter" findings.json)"
+          body+="$outside_list"
         fi
 
         # REQUEST_CHANGES when any finding is blocking (new or still-open); otherwise
@@ -638,7 +638,7 @@ runs:
         } > pr-review-brief-comment.md
 
         brief_comment_id="$(gh api "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-          | jq -s 'add // [] | [.[] | select(.user.type == "Bot" and .body | contains("<!-- langwatch-review-brief -->"))] | first | .id // empty')"
+          | jq -s 'add // [] | [.[] | select(.user.type == "Bot" and (.body | contains("<!-- langwatch-review-brief -->")))] | first | .id // empty')"
 
         if [[ -n "$brief_comment_id" ]]; then
           gh api \
