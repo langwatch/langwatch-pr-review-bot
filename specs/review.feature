@@ -53,12 +53,12 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer does not run
 
-  Scenario: A follow-up review omits resolved findings
+  Scenario: A follow-up review tracks resolved and still-open findings
     Given an earlier review with findings
     When a new push resolves some of them
-    Then the follow-up review omits the resolved findings
-    And restates the remaining ones as first-time findings
-    And no finding carries a resolved, still-open, superseded, or NEW label
+    Then the follow-up review lists the resolved findings' ids in the top-level "resolved" array
+    And re-emits each still-unresolved finding with its previous id and status "open"
+    And no finding's summary or fix text narrates history
 
   Scenario: A fork pull request is skipped
     Given a pull request opened from a fork
@@ -87,11 +87,39 @@ Feature: Automated PR review
     Then the inline comment states the priority, the problem in one sentence, and the fix in one sentence
     And the inline comment contains no history narration, rule citation, or praise
 
-  Scenario: Review body summarises for humans and does not repeat inline findings
-    Given the PR reviewer reports findings anchored to diff lines
+  Scenario: Review body reports counts and the delta since the previous review
+    Given a previous review of this pull request exists
+    And the current review has new, still-open, and resolved findings
     When the review is posted
-    Then the review body gives a plain-English overview and a blocking and non-blocking count
+    Then the review body reports the blocking and non-blocking count
+    And the review body reports the resolved, new, and still-open counts since the previous head sha
+    And the review body does not explain what the pull request does
     And the review body does not repeat the inline findings
+
+  Scenario: The first review omits the delta line
+    Given no previous review of this pull request exists
+    When the review is posted
+    Then the review body reports the blocking and non-blocking count
+    And the review body has no "Since" delta line
+
+  Scenario: Only new findings get inline comments
+    Given the current review has a new finding and a still-open finding, both anchored to diff lines
+    When the review is posted
+    Then only the new finding is posted as an inline comment
+    And the still-open finding gets no new inline comment
+
+  Scenario: Still-open blocking findings keep the review blocking
+    Given the current review has a still-open blocking finding and no new findings
+    When the review is posted
+    Then the pull request is marked "changes requested"
+    And the review posts no inline comments
+
+  Scenario: Brief is posted as a standalone PR comment
+    Given the automated review has completed
+    When the human review brief is generated
+    Then the brief is posted as an issue comment on the pull request
+    And the comment begins with the signature "@LangWatchReviewBot" and the head sha
+    And the brief is also uploaded as a workflow artifact
 
   Scenario: Review is signed @LangWatchReviewBot
     Given the PR reviewer posts any review

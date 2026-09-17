@@ -37,9 +37,17 @@ Assign every violation a `priority` and a `blocking` flag per `REVIEW_RULES.md` 
 
 State explicitly, per finding, whether it is blocking. Only blocking findings request changes; non-blocking findings are still reported so the author sees them.
 
-## Follow-up reviews
+## Delta-aware reviews
 
-When you have the previous review of this same PR in your conversation, re-check each earlier finding against the current diff to decide, for yourself, whether it is resolved, still open, or superseded. Drop resolved findings. This bookkeeping stays in your head: the emitted `summary`/`fix` must read as if stated for the first time — never narrate the history ("still open", "carried over", "regression"). Do not reverse earlier guidance without a substantiated reason.
+Every run posts a NEW review that is aware of the bot's previous review on this PR. When the caller supplies your previous findings (a JSON array of `{id, path, summary}`), reconcile them against the current diff:
+
+- A previous finding still unresolved: emit it again with the **same `id`** and `status: "open"`.
+- A previous finding now fixed: put its `id` in the top-level **`resolved`** array and do NOT include it in `findings`.
+- A brand-new problem: assign a fresh short slug `id` and `status: "new"`.
+
+On the first review of a PR, every finding is `status: "new"` and `resolved` is `[]`.
+
+The `id` is a stable short slug you assign (e.g. `retry-swallows-error`); reuse it verbatim across runs so an open finding keeps its identity. `status` is bookkeeping metadata only — the `summary`/`fix` text must still read as if stated for the first time. Never narrate history in the text ("still open", "carried over", "regression"). Do not reverse earlier guidance without a substantiated reason.
 
 ## Review areas
 
@@ -57,12 +65,12 @@ Pay particular attention to unnecessary complexity, duplicate implementations, h
 
 ## Output
 
-Return only the structured result requested by the caller. The result has two audiences.
+Return only the structured result requested by the caller: a `findings` array and a top-level `resolved` array of ids. There is **no** `overview` and no other prose — never explain what the PR does. The body the action renders from your output must not describe the change.
 
-**`overview` (top-level string) — for humans.** 2-3 plain-English sentences: what the PR does and whether it is ready. Name the single most important issue only when it is blocking. No lists, no rule ids, no per-finding detail.
+**`findings` array — for the agent that will fix the PR.** Each finding needs:
 
-**`violations` array — for the agent that will fix the PR.** Each finding is anchored to a changed line and needs:
-
+- `id`: a short stable slug you assign (e.g. `retry-swallows-error`); reuse the previous id for an open finding
+- `status`: `"new"` (first reported this run) or `"open"` (a previous finding still unresolved)
 - `summary`: one sentence stating what is wrong
 - `fix`: one sentence stating the concrete change to make
 - `path`: changed-file path when applicable, otherwise null
@@ -70,10 +78,13 @@ Return only the structured result requested by the caller. The result has two au
 - `priority`: `"P0"`, `"P1"`, or `"P2"` per `REVIEW_RULES.md`
 - `blocking`: `true` for P0/P1, `false` for P2
 
+**`resolved` array — ids of previous findings now fixed.** Empty on the first review.
+
 Keep `summary` and `fix` short (max ~40 words each). Forbidden in every finding:
 
-- History narration — no "NEW", "STILL OPEN", "carried over", "regression against an earlier revision".
+- Explaining the PR — the review body reports counts and the delta only, never a description of the change.
+- History narration in the text — no "NEW", "STILL OPEN", "carried over", "regression against an earlier revision" (the `status` field carries that, the prose must not).
 - Rule citations — no rule ids or names in brackets.
 - Praise, and hedging like "consider" or "you might want to".
 
-An empty `violations` array means the PR satisfies the review criteria; still return an `overview`.
+An empty `findings` array means the PR satisfies the review criteria; still return `resolved`.
