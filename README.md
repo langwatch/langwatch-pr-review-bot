@@ -15,9 +15,13 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
-- PRs targeting `main` are reviewed only after repository prerequisites pass and there are no unresolved review comments.
+- PRs targeting `main` are reviewed only after repository prerequisites pass and there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
+- Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A clean review posts `APPROVE`.
-- Concrete violations post `REQUEST_CHANGES` with inline comments, notify Slack, and fail the review job.
+- Blocking violations post `REQUEST_CHANGES` with inline comments, notify Slack, and fail the review job.
+- Only non-blocking findings post as a `COMMENT` review (still visible, inline) without failing the job.
+- Reviews are exhaustive in one pass: every substantiated violation is reported, each citing `file:line` and the rule.
+- The reviewer's session is remembered across runs on the same PR, so a follow-up review re-checks its earlier findings instead of re-deriving and reversing them.
 - After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill and generates the human review brief from its template.
 
 ## How it works
@@ -30,30 +34,35 @@ repository prerequisites
         |
         +--> skip unless base branch is main
         |
-        +--> block if review threads are unresolved
+        +--> block if HUMAN review threads are unresolved
         |
         v
 trusted base checkout
         |
+        +--> restore cached Claude session for this PR
+        |
         +--> Claude Code: pr-reviewer agent
         |       |
+        |       +--> resume prior session when present (memory of past findings)
         |       +--> pr-review skill
         |       +--> read-only repo inspection
         |
         +--> PR diff supplied as untrusted evidence
         |
         v
-structured review result
-  |             |
-  v             v
-PASS          VIOLATIONS
-  |             |
-APPROVE     REQUEST_CHANGES
-  |             |
-  +------ slack notification on violations
+structured review result (each finding: priority + blocking)
+  |             |              |
+  v             v              v
+PASS      BLOCKING        NON-BLOCKING ONLY
+  |             |              |
+APPROVE   REQUEST_CHANGES   COMMENT
+  |             |              |
+  +------ slack notification on any violation
   |
   v
 Claude --continue
+  |
+  +--> save session to cache (if: always)
   |
   +--> pr-brief skill
   +--> TEMPLATE.md
@@ -76,6 +85,16 @@ The review job checks out the PR's base SHA, never the PR-controlled tree. It fe
 The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
 
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
+
+### Session memory across runs
+
+Claude Code stores each session transcript under `~/.claude/projects`. The workflow caches that directory with `actions/cache`, keyed by PR (`claude-session-<repo_id>-pr-<N>-<run_id>`, with a `-pr-<N>-` restore prefix). The review step also writes the run's `session_id` to a small file inside the cached directory. On the next run for the same PR, if that id and its transcript are present, the review resumes with `claude -p --resume "$SESSION_ID"`; otherwise it starts fresh. The save step runs `if: always()`, so the conversation persists even when blocking findings fail the job.
+
+Resuming gives the reviewer a memory of its earlier findings. A follow-up review re-checks each previous finding against the current diff — resolved, still open, or superseded — instead of re-deriving from scratch and silently reversing itself.
+
+### Priorities and blocking
+
+Every finding carries a `priority` and a `blocking` flag, defined in [`REVIEW_RULES.md`](REVIEW_RULES.md#priorities). P0 (correctness/security/data-loss/AC-not-met) and P1 (must-fix, no runtime risk) are blocking; P2 (quality/style/opinion, judged with per-rule methodology) is non-blocking. The review posts `REQUEST_CHANGES` only when at least one finding is blocking, `COMMENT` when there are only non-blocking findings, and `APPROVE` when clean. The "Fail when violations were found" step fails the job only on blocking findings.
 
 The generated brief is written to `pr-review-brief.md`, added to the GitHub Actions job summary, and uploaded as a workflow artifact.
 
@@ -108,4 +127,4 @@ Docs:
 
 ## Review philosophy
 
-This bot is intentionally not a suggestion engine. It should not report cosmetic preferences or weak hypotheticals. When it catches a recurring real problem, add one concise rule to `REVIEW_RULES.md` and update the skill only when the workflow/instructions themselves need to change.
+This bot is intentionally not a suggestion engine. It does not report cosmetic preferences or weak hypotheticals. Within that bar it is exhaustive, not sparse: in one pass it reports every violation it can substantiate, each citing `file:line` and the rule, and marks which are non-blocking rather than dropping them. Priority (P0/P1/P2) separates what must gate the merge from what is worth seeing but not blocking. When it catches a recurring real problem, add one concise rule to `REVIEW_RULES.md` with its default priority and, for subjective rules, a short "How to judge"; update the skill only when the workflow/instructions themselves need to change.

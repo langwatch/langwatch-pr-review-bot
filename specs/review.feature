@@ -10,16 +10,42 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer does not run
 
-  Scenario: Prerequisites are satisfied and violations are found
+  Scenario: Prerequisites are satisfied and blocking violations are found
     Given the pull request targets "main"
     And all prerequisite pipeline checks are green
     And all tests are green
     And there are no unresolved review comments
     When the PR reviewer evaluates the pull request using the repository review skill and review rules
+    And one or more findings are blocking
     Then concrete violations are reported as inline review comments
     And the pull request is marked "changes requested"
     And the PR reviewer status check fails
     And a notification is posted to the Slack dev channel
+
+  Scenario: Only non-blocking findings are found
+    Given the pull request targets "main"
+    And all prerequisite pipeline checks are green
+    And there are no unresolved review comments
+    When the PR reviewer evaluates the pull request using the repository review skill and review rules
+    And every finding is non-blocking
+    Then the findings are reported as review comments
+    And the pull request is not marked "changes requested"
+    And the PR reviewer status check passes
+
+  Scenario: Each finding carries a priority
+    Given the pull request targets "main"
+    When the PR reviewer reports a finding
+    Then the finding carries a priority
+    And the finding states whether it is blocking
+
+  Scenario: A follow-up review remembers earlier findings
+    Given a pull request that was already reviewed once
+    And the pull request has been updated
+    When the PR reviewer evaluates the updated pull request
+    Then the reviewer re-checks each earlier finding against the current change
+    And each earlier finding is marked resolved, still open, or superseded
+    And the reviewer does not reverse earlier guidance without stating why
+    And any new findings are reported
 
   Scenario: Prerequisites are satisfied and no violations are found
     Given the pull request targets "main"
