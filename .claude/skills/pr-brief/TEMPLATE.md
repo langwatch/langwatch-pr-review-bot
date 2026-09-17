@@ -1,5 +1,3 @@
-# Human Review Brief
-
 **Risk in merging:** <the concrete consequence or risk of merging this change>
 
 ## State

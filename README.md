@@ -22,13 +22,13 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Slack notification is opt-out: `slack_notify: false` suppresses it, and only an explicit false disables it.
 - `extra_instructions` appends caller-workflow guidance to the review prompt; it is reviewed by humans as a workflow change.
 - The action ref on the `uses:` line (`@main`, or a pinned `@v1` tag) selects the version of the rules, agent, and skills that ships with the run.
-- Inline review comments are posted only for findings inside the PR diff; findings outside the diff are listed in the review body and marked "(outside diff)".
+- Inline review comments are posted only for findings inside the PR diff; findings outside the diff (new and still-open) are listed in the review body under "Outside the diff".
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A review with no blocking finding posts `APPROVE`; a review with any blocking finding (new or still-open) posts `REQUEST_CHANGES`, notifies Slack, and fails the review job.
 - Every finding is anchored to `file:line` and states the problem and the fix.
 - Each run posts a NEW delta-aware review: findings carry a stable `id` and `status` (`new`/`open`), the reviewer returns a top-level `resolved` array, and the body shows the `Since <sha7>` delta. Only `new` findings get inline comments.
 - Findings persist across runs to `last-review.json` in the cached session directory, so the next run knows what it reported before.
-- After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill, generates the human review brief from its template, posts it as a PR comment, and uploads it as an artifact.
+- After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill, generates the human review brief from its template, upserts it as a single marker-identified PR comment (updated in place across runs), and uploads it as an artifact.
 
 ## Install in your repository
 
@@ -119,7 +119,7 @@ structured review result (each finding: priority + blocking)
   v             v              v
 PASS      BLOCKING        NON-BLOCKING ONLY
   |             |              |
-APPROVE   REQUEST_CHANGES   COMMENT
+APPROVE   REQUEST_CHANGES   APPROVE
   |             |              |
   +------ slack notification on blocking violations
   |
@@ -154,9 +154,9 @@ The automated review runs through `claude -p` with a JSON Schema. The brief then
 
 Each run posts three things, delta-aware against the bot's previous review on the same PR:
 
-1. **A review with the delta.** The body is for humans: it opens with `**@LangWatchReviewBot**`, gives a `**N blocking · M non-blocking**` count (or `**No blocking findings.**` when clean), and — when a previous review exists — a `Since <sha7>: X resolved · Y new · Z still open` line. The body never explains the PR and never repeats the inline findings. It lists only NEW findings that fell outside the diff under `Outside the diff:`. The review is `REQUEST_CHANGES` when any finding is blocking (new or still-open), otherwise `APPROVE`.
+1. **A review with the delta.** The body is for humans: it opens with `**@LangWatchReviewBot**`, gives a `**N blocking · M non-blocking**` count (or `**No blocking findings.**` when clean), and — when a previous review exists — a `Since <sha7>: X resolved · Y new · Z still open` line. Still-open findings that carry a stored inline url get a `Still open:` line linking each id straight to its thread. The body never explains the PR and never repeats the inline findings. It lists outside-diff findings — both `new` and still-`open` (open findings with no stored url) — under `Outside the diff:`, so a still-open blocker never disappears. The review is `REQUEST_CHANGES` when any finding is blocking (new or still-open), otherwise `APPROVE`.
 2. **Inline comments for the new findings.** One per finding with `status: new` anchored to a diff line, formatted as `**[P0 · blocking]** <what is wrong>` followed by `Fix: <the concrete change>` — no history narration, no rule citations, no praise. Still-open findings get no new inline comment; a run whose only blocking findings are still-open posts the short body with no inline comments — the "still blocked" signal.
-3. **The human review brief as a PR comment.** Posted each run as an issue comment, prefixed with `**@LangWatchReviewBot · Review brief for \`<head sha7>\`**`. The brief is standalone and is also uploaded as a workflow artifact.
+3. **The human review brief as a PR comment.** Upserted into one issue comment per PR: the bot finds its prior brief by the `<!-- langwatch-review-brief -->` marker and updates it in place, or posts a new one when none exists. The comment is headed `**@LangWatchReviewBot** · Review brief · \`<head sha7>\``. The brief is standalone and is also uploaded as a workflow artifact.
 
 Findings are delta-aware: each carries a stable `id` and a `status` of `new` or `open`, and the reviewer returns a top-level `resolved` array of the ids fixed since the last run. That state is persisted to `last-review.json` inside the cached session directory so the next run knows what it reported before.
 

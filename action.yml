@@ -340,6 +340,15 @@ runs:
           prev_findings_block=" Your previous findings on this PR are this JSON array of {id,path,summary}: ${prev_findings_json}. For each previous finding still unresolved in the CURRENT diff, emit it again with the SAME id and status \"open\". For any that is now fixed, put its id in the top-level \"resolved\" array and do NOT include it in \"findings\". A brand-new problem gets a fresh short slug id and status \"new\"."
         fi
 
+        # Map of previously-reported finding id -> stored inline html_url. Used to
+        # render "Still open" navigation links this run and carried forward for any
+        # finding that is not re-inlined. Empty when no previous review exists.
+        if [[ "$has_prev" == "true" ]]; then
+          jq -c '[.findings[]? | select((.url // "") != "") | {(.id): .url}] | add // {}' "$last_review_file" > prev-urls.json
+        else
+          echo '{}' > prev-urls.json
+        fi
+
         # The rules, agent, and skills come from the action's own repository (fetched by
         # the runner into $ACTION_PATH and loaded into ~/.claude via the user setting
         # source), never from the PR working tree. --setting-sources user excludes the
@@ -431,8 +440,9 @@ runs:
         # from the PR diff above) can go inline — GitHub 422s the WHOLE review if any
         # comment names a path/line outside the diff hunks. Everything else stays
         # body-only.
-        jq --slurpfile commentable commentable.json '
+        jq --slurpfile commentable commentable.json --slurpfile prevurls prev-urls.json '
           ($commentable[0] // []) as $c
+          | ($prevurls[0] // {}) as $u
           | map(
               (if .path != null then (.path | sub("^\\./"; "")) else null end) as $norm_path
               | . + {
@@ -440,7 +450,8 @@ runs:
                   inline: (
                     $norm_path != null and .line != null
                     and ({path: $norm_path, line: .line} | IN($c[]))
-                  )
+                  ),
+                  url: ($u[.id] // null)
                 }
             )
         ' findings.json > findings-annotated.json && mv findings-annotated.json findings.json
@@ -455,10 +466,18 @@ runs:
         prev_sha7="${prev_head_sha:0:7}"
         since_line="Since \`${prev_sha7}\`: ${resolved_count} resolved · ${new_count} new · ${open_count} still open"
 
-        # Body list renderer for NEW findings that could not be inlined:
+        # "Still open" navigation: still-open findings that carried a stored inline url
+        # from a previous run, rendered as clickable id links after the Since line so a
+        # reader can jump straight to each blocking thread that is still unaddressed.
+        still_open_filter='[.[] | select(.status == "open" and (.url // "") != "") | "[`" + .id + "`](" + .url + ")"] | join(" · ")'
+        still_open_count="$(jq '[.[] | select(.status == "open" and (.url // "") != "")] | length' findings.json)"
+
+        # Body list renderer for outside-diff findings: NEW findings that could not be
+        # inlined AND still-open findings with no stored url (also outside the diff), so
+        # findings that would otherwise block invisibly are always listed in the body.
         # "- **[P#]** `path` — summary Fix: fix". path renders "(no file)" when null.
-        outside_filter='.[] | select(.status == "new" and .inline != true) | "- **[" + .priority + "]** " + (if .path then ("`" + .path + "`") else "(no file)" end) + " — " + .summary + " Fix: " + .fix'
-        outside_new_count="$(jq '[.[] | select(.status == "new" and .inline != true)] | length' findings.json)"
+        outside_filter='.[] | select((.status == "new" and .inline != true) or (.status == "open" and (.url // "") == "")) | "- **[" + .priority + "]** " + (if .path then ("`" + .path + "`") else "(no file)" end) + " — " + .summary + " Fix: " + .fix'
+        outside_count="$(jq '[.[] | select((.status == "new" and .inline != true) or (.status == "open" and (.url // "") == ""))] | length' findings.json)"
 
         if [[ "$count" -eq 0 ]]; then
           body="${header}"$'\n\n''**No blocking findings.**'
@@ -468,7 +487,10 @@ runs:
         if [[ "$has_prev" == "true" ]]; then
           body+=$'\n'"${since_line}"
         fi
-        if [[ "$outside_new_count" -gt 0 ]]; then
+        if [[ "$still_open_count" -gt 0 ]]; then
+          body+=$'\n'"Still open: $(jq -r "$still_open_filter" findings.json)"
+        fi
+        if [[ "$outside_count" -gt 0 ]]; then
           body+=$'\n\nOutside the diff:\n'
           body+="$(jq -r "$outside_filter" findings.json)"
         fi
@@ -489,23 +511,36 @@ runs:
           --arg sha "$PR_HEAD_SHA" \
           --arg event "$event" \
           --argjson findings "$(cat findings.json)" \
-          '{body:$body,event:$event,commit_id:$sha,comments:[$findings[] | select(.inline == true and .status == "new") | {path:.norm_path,line:.line,side:"RIGHT",body:("**[" + .priority + " · " + (if .blocking then "blocking" else "non-blocking" end) + "]** " + .summary + "\nFix: " + .fix)}]}' > review-payload.json
+          '{body:$body,event:$event,commit_id:$sha,comments:[$findings[] | select(.inline == true and .status == "new") | {path:.norm_path,line:.line,side:"RIGHT",body:("**[" + .priority + " · " + (if .blocking then "blocking" else "non-blocking" end) + "]** " + .summary + "\nFix: " + .fix + "\n\n<!-- id:" + .id + " -->")}]}' > review-payload.json
 
         if ! gh api \
           --method POST \
           "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
-          --input review-payload.json; then
+          --input review-payload.json > review-response.json; then
           echo "::error::POST /repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews failed."
           echo "::group::findings.json"; cat findings.json; echo "::endgroup::"
           echo "::group::review-payload.json"; cat review-payload.json; echo "::endgroup::"
           exit 1
         fi
 
+        # Fetch the just-posted review's inline comments and map each finding id to its
+        # permanent html_url, matched on the "<!-- id:<slug> -->" marker embedded in the
+        # comment body. That url lets a later run link a still-open finding straight to
+        # its thread. Best-effort: a failure here never fails the review job.
+        review_id="$(jq -r '.id // empty' review-response.json)"
+        echo '{}' > new-urls.json
+        if [[ -n "$review_id" ]]; then
+          if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${review_id}/comments" > review-comments.json 2>/dev/null; then
+            jq -c 'reduce .[] as $c ({}; ($c.body | [scan("<!-- id:(\\S+) -->")] | first) as $m | ($m[0]?) as $id | if $id then . + {($id): $c.html_url} else . end)' review-comments.json > new-urls.json
+          fi
+        fi
+
         # Persist this run's findings inside the cached dir so the next run is aware of
         # them: each keeps its id so still-open findings are re-emitted as "open" and
         # fixed ones reported under "resolved". head_sha drives the next "Since" line.
-        jq -c --arg sha "$PR_HEAD_SHA" \
-          '{head_sha:$sha, findings:[.[] | {id,path,line,priority,blocking,summary,fix}]}' \
+        jq -c --arg sha "$PR_HEAD_SHA" --slurpfile newurls new-urls.json \
+          '($newurls[0] // {}) as $nu
+           | {head_sha:$sha, findings:[.[] | {id,path,line,priority,blocking,summary,fix, url: ($nu[.id] // .url // null)}]}' \
           findings.json > "$last_review_file"
 
         if [[ "$blocking" -gt 0 ]]; then
@@ -588,19 +623,33 @@ runs:
 
         test -s pr-review-brief.md
 
-        # Post the brief as an issue comment on the PR each run, signed and stamped
-        # with the head sha7 so a reader knows which revision it describes. The brief
-        # is standalone (its template does not reference the inline comments). The
+        # One brief comment per PR, updated in place. The header line is signed and
+        # stamped with the head sha7, then the marker, then the brief body. Find the
+        # bot's existing brief comment by the marker and PATCH it; POST only when none
+        # exists — so the PR keeps a single, current brief instead of one per run. The
+        # brief is standalone (its template does not reference the inline comments). The
         # artifact upload below is kept as well. -F body=@file sends the file verbatim
         # (lowercase -f would parse it as a key=value form field and corrupt it).
         {
-          printf '**@LangWatchReviewBot · Review brief for `%s`**\n\n' "${PR_HEAD_SHA:0:7}"
+          printf '**@LangWatchReviewBot** · Review brief · `%s`\n' "${PR_HEAD_SHA:0:7}"
+          printf '<!-- langwatch-review-brief -->\n\n'
           cat pr-review-brief.md
         } > pr-review-brief-comment.md
-        gh api \
-          --method POST \
-          "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
-          -F body=@pr-review-brief-comment.md
+
+        brief_comment_id="$(gh api "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+          --jq '[.[] | select(.body | contains("<!-- langwatch-review-brief -->"))] | first | .id // empty')"
+
+        if [[ -n "$brief_comment_id" ]]; then
+          gh api \
+            --method PATCH \
+            "/repos/${REPOSITORY}/issues/comments/${brief_comment_id}" \
+            -F body=@pr-review-brief-comment.md
+        else
+          gh api \
+            --method POST \
+            "/repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            -F body=@pr-review-brief-comment.md
+        fi
 
         {
           echo

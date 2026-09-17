@@ -20,7 +20,7 @@ Feature: Automated PR review
   Scenario: Blocking findings request changes and notify Slack
     Given all prerequisite checks are green
     When the PR reviewer finds one or more blocking violations
-    Then concrete violations are reported as inline review comments
+    Then new blocking violations are reported as inline review comments
     And the pull request is marked "changes requested"
     And the PR reviewer status check fails
     And a notification is posted to the Slack dev channel
@@ -28,7 +28,7 @@ Feature: Automated PR review
   Scenario: Non-blocking or no findings pass the review
     Given all prerequisite checks are green
     When the PR reviewer finds only non-blocking findings, or none at all
-    Then any findings are reported as review comments
+    Then any new findings are reported as inline review comments
     And the pull request is not marked "changes requested"
     And the PR reviewer status check passes
     And each finding carries a priority and states whether it is blocking
@@ -81,6 +81,12 @@ Feature: Automated PR review
     Then the finding appears in the review body under "Outside the diff"
     And the finding is not posted as an inline comment
 
+  Scenario: Still-open findings outside the diff stay listed in the review body
+    Given a still-open finding that is outside the current pull request diff
+    When the review is posted
+    Then the finding appears in the review body under "Outside the diff" alongside any new outside-diff findings
+    And the still-open finding gets no new inline comment
+
   Scenario: Inline comment states problem and fix only
     Given the PR reviewer reports a blocking finding anchored to a diff line
     When the review is posted
@@ -114,10 +120,11 @@ Feature: Automated PR review
     Then the pull request is marked "changes requested"
     And the review posts no inline comments
 
-  Scenario: Brief is posted as a standalone PR comment
+  Scenario: Brief is one comment updated in place
     Given the automated review has completed
     When the human review brief is generated
-    Then the brief is posted as an issue comment on the pull request
+    Then the brief is upserted as a single issue comment identified by its marker
+    And an existing brief comment is updated in place instead of posting a new one
     And the comment begins with the signature "@LangWatchReviewBot" and the head sha
     And the brief is also uploaded as a workflow artifact
 
