@@ -84,16 +84,17 @@ jobs:
           cursor=""
           while :; do
             response="$(gh api graphql \
-              -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:1){nodes{author{login}}}}pageInfo{hasNextPage,endCursor}}}}}' \
+              -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{login}}}}pageInfo{hasNextPage,endCursor}}}}}' \
               -f owner="$REPOSITORY_OWNER" \
               -f name="$REPOSITORY_NAME" \
               -F number="$PR_NUMBER" \
               -f cursor="$cursor")"
 
-            # Count only unresolved HUMAN threads. Threads whose first comment was
-            # authored by this bot (github-actions) are its own review findings, not
-            # human review comments, so they must not block the next run.
-            unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select((.comments.nodes[0].author.login // "") | startswith("github-actions") | not)] | length' <<< "$response")"
+            # Count only unresolved HUMAN threads. A thread is the bot's own if every
+            # comment in it was authored by this bot (github-actions); a human reply
+            # anywhere in the thread makes it a human thread, even when the bot opened
+            # it, so it still blocks the next run.
+            unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.login // "" | startswith("github-actions") | not] | any)] | length' <<< "$response")"
             if [[ "$unresolved" -gt 0 ]]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "PR has unresolved review comments; reviewer does not run."
@@ -124,7 +125,6 @@ jobs:
       # resume the same conversation. Keys are immutable, so the key is unique per
       # run and restore-keys falls back to the latest cache for this PR.
       - name: Restore Claude session
-        id: restore-session
         if: ${{ steps.context.outputs.skip != 'true' }}
         uses: actions/cache/restore@v4
         with:
@@ -181,8 +181,11 @@ jobs:
           session_id_file="$HOME/.claude/projects/pr-review-bot-session-id"
           # .claude/ and REVIEW_RULES.md are read from base.sha (trusted baseline), so rule/skill
           # edits in a PR take effect after merge; the prompt carries the output contract.
-          fresh_prompt='Run the automated PR review phase using the pr-review skill. Read the trusted REVIEW_RULES.md and inspect the trusted repository as needed. Review the problem statement, proposed solution, implementation, architecture, tests, comments, security, and project conventions. Report only concrete, evidence-backed violations. Do not report preferences or speculative concerns. Do not modify anything. Return only the structured review object. Be ruthless and exhaustive in one pass: report every violation you can substantiate with file:line and a rule; a follow-up pass is not guaranteed. Every violation object MUST include "priority" and "blocking". priority: P0 = correctness, security, data loss, or acceptance criteria not met; P1 = a rule violation that must be fixed before merge but has no runtime risk; P2 = quality, style, or judgement call backed by the rule'\''s methodology. blocking: true for P0 and P1, false for P2. Output only the JSON object matching the schema.'
-          followup_prompt='This is a follow-up review of the same pull request. Your previous findings are in this conversation. Re-check each previous finding against the current diff: mark it resolved, still open, or superseded. Do not reverse earlier guidance without stating why. Then report any NEW findings exhaustively. Return only the structured review object. Be ruthless and exhaustive in one pass: report every violation you can substantiate with file:line and a rule; a follow-up pass is not guaranteed. Every violation object MUST include "priority" and "blocking". priority: P0 = correctness, security, data loss, or acceptance criteria not met; P1 = a rule violation that must be fixed before merge but has no runtime risk; P2 = quality, style, or judgement call backed by the rule'\''s methodology. blocking: true for P0 and P1, false for P2. Output only the JSON object matching the schema.'
+          # Shared output contract appended to both prompts so the schema/priority
+          # rules are stated once, not duplicated per-prompt.
+          output_contract='Return only the structured review object. Be ruthless and exhaustive in one pass: report every violation you can substantiate with file:line and a rule; a follow-up pass is not guaranteed. Every violation object MUST include "priority" and "blocking". priority: P0 = correctness, security, data loss, or acceptance criteria not met; P1 = a rule violation that must be fixed before merge but has no runtime risk; P2 = quality, style, or judgement call backed by the rule'\''s methodology. blocking: true for P0 and P1, false for P2. Output only the JSON object matching the schema.'
+          fresh_prompt="Run the automated PR review phase using the pr-review skill. Read the trusted REVIEW_RULES.md and inspect the trusted repository as needed. Review the problem statement, proposed solution, implementation, architecture, tests, comments, security, and project conventions. Report only concrete, evidence-backed violations. Do not report preferences or speculative concerns. Do not modify anything. ${output_contract}"
+          followup_prompt="This is a follow-up review of the same pull request. Your previous findings are in this conversation. Re-check each previous finding against the current diff: mark it resolved, still open, or superseded. Do not reverse earlier guidance without stating why. Then report any NEW findings exhaustively. ${output_contract}"
 
           review_prompt="$fresh_prompt"
           resume_args=()
@@ -286,7 +289,7 @@ jobs:
             "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
             --input review-payload.json
 
-          if [[ "$count" -gt 0 ]]; then
+          if [[ "$blocking" -gt 0 ]]; then
             if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
               slack_message="PR review violations found: ${REPOSITORY}#${PR_NUMBER}\n${body}"
               jq -n --arg text "$slack_message" '{text:$text}' > slack-payload.json
@@ -300,8 +303,6 @@ jobs:
             fi
           fi
 
-          # The job fails only on blocking findings; non-blocking findings post but
-          # do not gate the PR.
           if [[ "$blocking" -gt 0 ]]; then
             echo 'review_failed=true' >> "$GITHUB_OUTPUT"
           else

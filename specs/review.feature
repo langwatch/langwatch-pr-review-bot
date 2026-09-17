@@ -38,6 +38,21 @@ Feature: Automated PR review
     Then the finding carries a priority
     And the finding states whether it is blocking
 
+  Scenario: A thread opened by the automated reviewer does not block the next review
+    Given the pull request targets "main"
+    And a review thread was opened by the automated reviewer and has no human reply
+    And the thread is unresolved
+    When the pipeline runs
+    Then the PR reviewer runs
+
+  Scenario: A human reply in a reviewer-opened thread still blocks the next review
+    Given the pull request targets "main"
+    And a review thread was opened by the automated reviewer
+    And a human has replied in the thread
+    And the thread is unresolved
+    When the pipeline runs
+    Then the PR reviewer does not run
+
   Scenario: A follow-up review remembers earlier findings
     Given a pull request that was already reviewed once
     And the pull request has been updated

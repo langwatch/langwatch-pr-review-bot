@@ -11,7 +11,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 ## Acceptance criteria
 
 - Review rules live in the repository and are applied consistently.
-- Reviewer instructions are trusted and cannot be replaced by a PR.
+- The review skill, agent, and rules are read from the base branch and cannot be replaced by a PR. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
@@ -57,7 +57,7 @@ PASS      BLOCKING        NON-BLOCKING ONLY
   |             |              |
 APPROVE   REQUEST_CHANGES   COMMENT
   |             |              |
-  +------ slack notification on any violation
+  +------ slack notification on blocking violations
   |
   v
 Claude --continue
@@ -80,7 +80,7 @@ The trusted Claude-specific instructions live on the trusted base in:
 - `.claude/skills/pr-brief/TEMPLATE.md` — source of truth for brief structure
 - `.claude/agents/pr-reviewer.md` — dedicated read-only subagent profile with access to both skills
 
-The review job checks out the PR's base SHA, never the PR-controlled tree. It fetches the PR ref only to compute a diff, so PR changes cannot replace the reviewer configuration before evaluation.
+The review job checks out the PR's base SHA, never the PR-controlled tree, so the review skill, agent, and `REVIEW_RULES.md` cannot be replaced by a PR. It fetches the PR ref only to compute a diff. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
 
 The workflow itself owns the gate and orchestration. There is no Python application layer: GitHub Actions performs prerequisite checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
 
