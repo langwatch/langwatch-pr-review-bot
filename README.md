@@ -27,7 +27,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - A clean review posts `APPROVE`.
 - Blocking violations post `REQUEST_CHANGES` with inline comments, notify Slack, and fail the review job.
 - Only non-blocking findings post as a `COMMENT` review (still visible, inline) without failing the job.
-- Reviews are exhaustive in one pass: every substantiated violation is reported, each citing `file:line` and the rule.
+- Every finding is anchored to `file:line` and states the problem and the fix.
 - The reviewer's session is remembered across runs on the same PR, so a follow-up review re-checks its earlier findings instead of re-deriving and reversing them.
 - After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill and generates the human review brief from its template.
 
@@ -196,4 +196,4 @@ Docs:
 
 ## Review philosophy
 
-This bot is intentionally not a suggestion engine. It does not report cosmetic preferences or weak hypotheticals. Within that bar it is exhaustive, not sparse: in one pass it reports every violation it can substantiate, each citing `file:line` and the rule, and marks which are non-blocking rather than dropping them. Priority (P0/P1/P2) separates what must gate the merge from what is worth seeing but not blocking. When it catches a recurring real problem, add one concise rule to `REVIEW_RULES.md` with its default priority and, for subjective rules, a short "How to judge"; update the skill only when the workflow/instructions themselves need to change.
+This bot is intentionally not a suggestion engine. It does not report cosmetic preferences or weak hypotheticals. Within that bar it is exhaustive, not sparse: in one pass it reports every violation it can substantiate, with every finding anchored to `file:line` and stating the problem and the fix, and marks which are non-blocking rather than dropping them. Priority (P0/P1/P2) separates what must gate the merge from what is worth seeing but not blocking. When it catches a recurring real problem, add one concise rule to `REVIEW_RULES.md` with its default priority and, for subjective rules, a short "How to judge"; update the skill only when the workflow/instructions themselves need to change.
