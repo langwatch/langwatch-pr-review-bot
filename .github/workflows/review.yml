@@ -207,12 +207,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The PR head is checked out at head.sha with fetch-depth 0, so its full history
-          # is local. The three-dot diff needs the base sha object; fetch only it when the
-          # base branch has advanced past what head can reach.
-          if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null; then
-            git fetch --no-tags --depth 1 origin "${PR_BASE_SHA}"
-          fi
+          # actions/checkout with fetch-depth: 0 already has full history, including the
+          # base sha object, so no extra fetch is needed before the three-dot diff.
           git diff --no-ext-diff "${PR_BASE_SHA}...${PR_HEAD_SHA}" > pr.diff
 
           # Build the set of (path, RIGHT-side line) pairs GitHub will accept an inline
@@ -307,7 +303,7 @@ jobs:
           # workflow change. Appended only when non-empty.
           extra_block=""
           if [[ -n "${EXTRA_INSTRUCTIONS:-}" ]]; then
-            extra_block=" Repo-specific guidance from the trusted caller workflow (not from the PR): ${EXTRA_INSTRUCTIONS}"
+            extra_block=" Repository-specific guidance from the install workflow (subordinate to ${rules_path}): ${EXTRA_INSTRUCTIONS}"
           fi
 
           # Shared output contract appended to both prompts so the schema/priority

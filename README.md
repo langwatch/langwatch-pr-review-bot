@@ -77,7 +77,7 @@ Keep `labeled` in the event types so applying the label triggers a run.
 | `bot_ref` | string | `"main"` | Ref of `langwatch/langwatch-pr-review-bot` to load rules, agent, and skills from. |
 | `base_branch` | string | `"main"` | Only review PRs whose base branch is this branch. |
 
-Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `main`.
+Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `base_branch` (default `main`).
 
 ## How it works
 
