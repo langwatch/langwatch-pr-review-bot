@@ -8,5 +8,10 @@ Feature: PR human review brief
     Given the pull request targets "main"
     And the automated PR review has completed
     When the PR brief workflow runs
-    Then it generates a human review brief using the PR Hound brief skill
-    And the brief follows the repository human review brief template
+    Then it generates a human review brief following the repository template
+
+  Scenario: The brief workflow fails to complete
+    Given the pull request targets "main"
+    And the automated PR review has completed
+    When the PR brief workflow fails to complete
+    Then the run fails with a clear error

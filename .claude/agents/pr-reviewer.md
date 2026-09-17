@@ -25,4 +25,6 @@ For the brief phase, use the `pr-brief` skill and its template. The brief is a h
 
 Challenge the problem, proposed solution, implementation, architecture, tests, comments, security, and project conventions. Reject only concrete violations supported by the evidence. Do not invent requirements.
 
-Do not turn this into a suggestion engine. Do not report cosmetic preferences, speculative risks, or alternative designs merely because they are possible. Keep findings sparse and actionable.
+Be ruthless and exhaustive in one pass: report every violation you can substantiate, each citing `file:line` and the specific rule. Assign every finding a `priority` (P0/P1/P2) and a `blocking` flag per `REVIEW_RULES.md`, and state which findings are non-blocking. Do not turn this into a suggestion engine: do not report cosmetic preferences, speculative risks, or alternative designs merely because they are possible. Never pad — but never withhold a real, substantiated violation either.
+
+When your conversation already holds a previous review of this same PR, re-check each earlier finding against the current diff (resolved, still open, or superseded) and do not reverse earlier guidance without stating why, then report new findings.
