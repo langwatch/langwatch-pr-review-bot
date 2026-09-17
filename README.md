@@ -11,17 +11,17 @@ PR review in this repository should be an enforceable engineering gate, not a su
 ## Acceptance criteria
 
 - Review rules live in the repository and are applied consistently.
-- The review skill, agent, and rules are loaded from the `langwatch/langwatch-pr-review-bot` repository (at `bot_ref`) and cannot be replaced by a PR. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
+- The review skill, agent, and rules ship with the action's own repository (fetched by the runner into `${{ github.action_path }}`) and cannot be replaced by a PR. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
 - PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
-- The bot installs as a reusable `workflow_call` workflow; a target repo adds only a thin caller and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
+- The bot installs as a composite GitHub Action; a target repo adds a thin caller workflow (checkout + `uses:`) and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
 - An optional label gate (`review_label`) restricts the review to PRs carrying that label; empty means always on.
 - Fork PRs are skipped, because secrets are unavailable there.
 - Slack notification is opt-out: `slack_notify: false` suppresses it, and only an explicit false disables it.
 - `extra_instructions` appends caller-workflow guidance to the review prompt; it is reviewed by humans as a workflow change.
-- `bot_ref` pins the bot repo ref that supplies the rules, agent, and skills.
+- The action ref on the `uses:` line (`@main`, or a pinned `@v1` tag) selects the version of the rules, agent, and skills that ships with the run.
 - Inline review comments are posted only for findings inside the PR diff; findings outside the diff are listed in the review body and marked "(outside diff)".
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A clean review posts `APPROVE`.
@@ -33,7 +33,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 
 ## Install in your repository
 
-The bot is a reusable workflow. Your repository does **not** need `REVIEW_RULES.md` or any `.claude/` files — the bot repo owns the rules, agent, and skills. You customize only through workflow inputs.
+The bot is a composite GitHub Action. Your repository does **not** need `REVIEW_RULES.md` or any `.claude/` files — the action's own repo ships the rules, agent, and skills. You customize only through inputs.
 
 Add `.github/workflows/review.yml` to your repo (copy from [`install/review.yml`](install/review.yml)):
 
@@ -47,35 +47,45 @@ permissions:
   pull-requests: write
 jobs:
   review:
-    uses: langwatch/langwatch-pr-review-bot/.github/workflows/review.yml@main
-    with:
-      review_label: ai-review
-      slack_notify: false
-      extra_instructions: ""
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      LANGWATCH_INGEST_KEY: ${{ secrets.LANGWATCH_INGEST_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: langwatch/langwatch-pr-review-bot@main
+        with:
+          review_label: ai-review
+          slack_notify: "false"
+          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
 ```
 
-Keep `labeled` in the event types so applying the label triggers a run.
+Keep `labeled` in the event types so applying the label triggers a run. Pin the action at `@main` for now; once a `v1` tag is cut, pin `@v1` instead (follow-up).
 
 ### Secrets
 
-| Secret | Required | Purpose |
-| --- | --- | --- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | yes | Claude Code auth. Generate with `claude setup-token` (starts with `sk-ant-oat01-…`). |
-| `LANGWATCH_INGEST_KEY` | no | Enables LangWatch telemetry export. See [Telemetry](#telemetry-langwatch). |
-| `SLACK_WEBHOOK_URL` | no | Slack notification target for blocking findings. |
+Secrets reach the action through inputs (a composite action has no `secrets:` block). Pass them from your repo secrets on the `with:` line, as the snippet above does.
+
+| Secret | Passed as input | Required | Purpose |
+| --- | --- | --- | --- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude_oauth_token` | yes | Claude Code auth. Generate with `claude setup-token` (starts with `sk-ant-oat01-…`). |
+| `LANGWATCH_INGEST_KEY` | `langwatch_ingest_key` | no | Enables LangWatch telemetry export. See [Telemetry](#telemetry-langwatch). |
+| `SLACK_WEBHOOK_URL` | `slack_webhook_url` | no | Slack notification target for blocking findings. |
 
 ### Inputs
 
-| Input | Type | Default | Effect |
-| --- | --- | --- | --- |
-| `review_label` | string | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
-| `slack_notify` | boolean | `true` | Post a Slack notification on blocking findings (needs `SLACK_WEBHOOK_URL`). |
-| `extra_instructions` | string | `""` | Repo-specific guidance appended to the review prompt as trusted instructions. |
-| `bot_ref` | string | `"main"` | Ref of `langwatch/langwatch-pr-review-bot` to load rules, agent, and skills from. |
-| `base_branch` | string | `"main"` | Only review PRs whose base branch is this branch. |
+| Input | Default | Effect |
+| --- | --- | --- |
+| `review_label` | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
+| `slack_notify` | `"true"` | Post a Slack notification on blocking findings (needs `slack_webhook_url`). Only `"false"` disables it. |
+| `extra_instructions` | `""` | Repo-specific guidance appended to the review prompt as trusted instructions. |
+| `base_branch` | `"main"` | Only review PRs whose base branch is this branch. |
+| `claude_oauth_token` | — (required) | Claude Code OAuth token. |
+| `langwatch_ingest_key` | `""` | LangWatch ingest key; enables telemetry when set. |
+| `slack_webhook_url` | `""` | Slack webhook for blocking-finding notifications. |
+| `github_token` | `${{ github.token }}` | Token for GitHub API calls (thread checks, posting the review). |
+| `claude_code_version` | `"2.1.270"` | Version of `@anthropic-ai/claude-code` to install. |
 
 Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `base_branch` (default `main`).
 
@@ -92,7 +102,7 @@ context checks
         +--> block if HUMAN review threads are unresolved
         |
         v
-bot repo checkout (trusted rules/agent/skills)
+action's own repo (trusted rules/agent/skills)
         |
         +--> restore cached Claude session for this PR
         |
@@ -128,16 +138,16 @@ human review brief
 
 The review rules live in [`REVIEW_RULES.md`](REVIEW_RULES.md).
 
-The trusted Claude-specific instructions live in the bot repository, loaded via the user setting source:
+The trusted Claude-specific instructions ship with the action's repository, loaded via the user setting source:
 
 - `.claude/skills/pr-review/SKILL.md` — violation-focused review methodology
 - `.claude/skills/pr-brief/SKILL.md` — human review brief workflow
 - `.claude/skills/pr-brief/TEMPLATE.md` — source of truth for brief structure
 - `.claude/agents/pr-reviewer.md` — dedicated read-only subagent profile with access to both skills
 
-The review job checks out the bot repository at `bot_ref` and loads its agent and skills through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `.pr-review-bot/REVIEW_RULES.md`. The PR working tree is checked out as the code under review and treated as untrusted evidence. The workflow file itself (including the prompt and output contract) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
+The runner fetches the action's own repository into `${{ github.action_path }}` and the action loads its agent and skills from there through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `REVIEW_RULES.md` supplied by the action (an absolute path outside the working tree). The caller checks out the PR head as the code under review, treated as untrusted evidence. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
 
-The workflow itself owns the gate and orchestration. It embeds a small Python diff-parsing helper but no application layer: GitHub Actions runs the context checks, gathers the diff, invokes Claude, validates the review output against the review JSON schema with `ajv`, posts the GitHub review, sends Slack notifications, generates the brief, and fails the job when violations are found.
+The action itself owns the gate and orchestration. It embeds a small Python diff-parsing helper but no application layer: its steps run the context checks, gather the diff, invoke Claude, validate the review output against the review JSON schema with `ajv`, post the GitHub review, send Slack notifications, generate the brief, and fail the job when violations are found.
 
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
 
@@ -161,7 +171,7 @@ The workflow expects these repository secrets:
 - `SLACK_WEBHOOK_URL` — used to post violation notifications to Slack.
 - `LANGWATCH_INGEST_KEY` — optional; when set, enables telemetry export, see [Telemetry (LangWatch)](#telemetry-langwatch) below.
 
-The GitHub token used for reviews and prerequisite thread checks comes from the built-in `GITHUB_TOKEN` secret.
+The GitHub token used for reviews and prerequisite thread checks comes from the `github_token` input, which defaults to the job's built-in `${{ github.token }}`.
 
 Claude Code is installed from the official `@anthropic-ai/claude-code` package at a pinned version. The reviewer uses the `opus` model alias from the dedicated agent profile.
 
@@ -173,7 +183,7 @@ Secret (optional):
 
 - `LANGWATCH_INGEST_KEY` — a LangWatch **ingest key** (`ik-lw-...`, trace-write only) created in the project settings, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. A project API key (`sk-lw-...`) also works but grants more than needed; prefer the ingest key. The workflow sends it as `Authorization: Bearer`.
 
-The export is configured as job-level `env` in `.github/workflows/review.yml`. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
+The export is configured inside the action's steps (`action.yml`): the non-secret OTEL variables are written once to `$GITHUB_ENV`, and the secret-bearing `OTEL_EXPORTER_OTLP_HEADERS` is set per `claude -p` step so no secret is echoed. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
 
 Docs:
 

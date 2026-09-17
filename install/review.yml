@@ -1,7 +1,7 @@
 # Copy this file to .github/workflows/review.yml in your repository.
-# The bot repo (langwatch/langwatch-pr-review-bot) owns the rules, agent, and
-# skills. You customize only through the inputs below — no REVIEW_RULES.md or
-# .claude/ files are needed in your repo.
+# The action (langwatch/langwatch-pr-review-bot) owns the rules, agent, and
+# skills. The runner fetches the action's own repo, so no REVIEW_RULES.md or
+# .claude/ files are needed in your repo. You customize only through inputs.
 name: PR Review Bot
 on:
   pull_request:
@@ -11,13 +11,18 @@ permissions:
   pull-requests: write
 jobs:
   review:
-    uses: langwatch/langwatch-pr-review-bot/.github/workflows/review.yml@main
-    with:
-      review_label: ai-review
-      slack_notify: false
-      extra_instructions: ""
-      # base_branch: main  # only review PRs targeting this branch (default: main)
-      # bot_ref: main       # pin the bot repo ref that supplies rules, agent, skills
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      LANGWATCH_INGEST_KEY: ${{ secrets.LANGWATCH_INGEST_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the PR head so the action can diff and inspect the working tree.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # Pin @main for now; tag and pin @v1 once released (see README follow-up).
+      - uses: langwatch/langwatch-pr-review-bot@main
+        with:
+          review_label: ai-review
+          slack_notify: "false"
+          claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}

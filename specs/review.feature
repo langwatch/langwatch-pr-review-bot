@@ -80,9 +80,9 @@ Feature: Automated PR review
     Then the finding appears in the review body marked "(outside diff)"
     And the finding is not posted as an inline comment
 
-  Scenario: Installed in another repository via the reusable workflow
+  Scenario: Installed in another repository as a GitHub Action
     Given a repository that installs the reviewer with only a thin caller workflow
     And the caller repository has no REVIEW_RULES.md and no .claude files
-    When the PR reviewer runs through the reusable workflow
-    Then the rules, agent, and skills come from the bot repository
+    When the PR reviewer runs through the installed GitHub Action
+    Then the rules, agent, and skills come from the action's own repository
     And the target repository customizes behavior only through workflow inputs
