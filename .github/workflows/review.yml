@@ -22,6 +22,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
+      # This repo's own dogfood workflow intentionally runs the action from the PR under
+      # review, not a pinned ref. This is NOT a trust boundary for this repo — only for
+      # installed/consumer repos, which use a pinned `uses:` ref instead of `./`.
       - uses: ./
         with:
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

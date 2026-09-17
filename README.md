@@ -11,7 +11,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 ## Acceptance criteria
 
 - Review rules live in the repository and are applied consistently.
-- The review skill, agent, and rules ship with the action's own repository (fetched by the runner into `${{ github.action_path }}`) and cannot be replaced by a PR. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human.
+- The review skill, agent, and rules ship with the action's own repository (fetched by the runner into `${{ github.action_path }}`) and, in an installed/consumer repository, cannot be replaced by a PR. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, and changes to it must be reviewed by a human. This repository's own dogfood workflow deliberately runs the action from the PR under review (`uses: ./`), so self-review here is not a trust boundary.
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
@@ -79,7 +79,7 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | --- | --- | --- |
 | `review_label` | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
 | `slack_notify` | `"true"` | Post a Slack notification on blocking findings (needs `slack_webhook_url`). Only `"false"` disables it. |
-| `extra_instructions` | `""` | Repo-specific guidance appended to the review prompt as trusted instructions. |
+| `extra_instructions` | `""` | Extra guidance appended to the review prompt, subordinate to the action's rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted. |
 | `base_branch` | `"main"` | Only review PRs whose base branch is this branch. |
 | `claude_oauth_token` | — (required) | Claude Code OAuth token. |
 | `langwatch_ingest_key` | `""` | LangWatch ingest key; enables telemetry when set. |
@@ -145,7 +145,7 @@ The trusted Claude-specific instructions ship with the action's repository, load
 - `.claude/skills/pr-brief/TEMPLATE.md` — source of truth for brief structure
 - `.claude/agents/pr-reviewer.md` — dedicated read-only subagent profile with access to both skills
 
-The runner fetches the action's own repository into `${{ github.action_path }}` and the action loads its agent and skills from there through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `REVIEW_RULES.md` supplied by the action (an absolute path outside the working tree). The caller checks out the PR head as the code under review, treated as untrusted evidence. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human.
+The runner fetches the action's own repository into `${{ github.action_path }}` and the action loads its agent and skills from there through the Claude Code **user** setting source, then runs with `--setting-sources user`. That excludes the target repository's own project/local `.claude` settings and hooks, so in an installed/consumer repository a PR cannot swap the reviewer's rules, agent, or skills, or inject hooks. The reviewer reads the rules only from the trusted `REVIEW_RULES.md` supplied by the action (an absolute path outside the working tree). The caller checks out the PR head as the code under review, treated as untrusted evidence. The caller workflow itself (including the pinned action ref) is PR-controlled like any GitHub Actions workflow, so changes to it must be reviewed by a human. This repository's own dogfood workflow deliberately runs the action from the PR under review (`uses: ./`), so self-review here is not a trust boundary.
 
 The action itself owns the gate and orchestration. It embeds a small Python diff-parsing helper but no application layer: its steps run the context checks, gather the diff, invoke Claude, validate the review output against the review JSON schema with `ajv`, post the GitHub review, send Slack notifications, generate the brief, and fail the job when violations are found.
 

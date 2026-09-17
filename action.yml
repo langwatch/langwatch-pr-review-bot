@@ -13,7 +13,7 @@ inputs:
     required: false
     default: "true"
   extra_instructions:
-    description: 'Repo-specific guidance appended to the review prompt as trusted instructions.'
+    description: 'Extra guidance appended to the review prompt, subordinate to the action''s rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted.'
     required: false
     default: ""
   base_branch:
@@ -151,7 +151,9 @@ runs:
     - name: Install Claude Code
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
-      run: npm install --global @anthropic-ai/claude-code@${{ inputs.claude_code_version }}
+      env:
+        CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version }}
+      run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
     - name: Verify Claude Code
       if: ${{ steps.context.outputs.skip != 'true' }}
@@ -192,8 +194,15 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
+        GITHUB_WORKSPACE: ${{ github.workspace }}
       run: |
         set -euo pipefail
+        # ACTION_PATH == GITHUB_WORKSPACE means the action is loaded from the PR
+        # working tree itself (this repo's own dogfood workflow, uses: ./), not from
+        # a separate pinned checkout — flag it so a run's logs make the mode obvious.
+        if [[ "$ACTION_PATH" == "$GITHUB_WORKSPACE" ]]; then
+          echo "::notice::Self-review: action loaded from the PR working tree (dogfood mode)"
+        fi
         mkdir -p "$HOME/.claude/agents" "$HOME/.claude/skills"
         cp -R "$ACTION_PATH/.claude/agents/." "$HOME/.claude/agents/"
         cp -R "$ACTION_PATH/.claude/skills/." "$HOME/.claude/skills/"
@@ -228,6 +237,10 @@ runs:
 
         # actions/checkout with fetch-depth: 0 already has full history, including the
         # base sha object, so no extra fetch is needed before the three-dot diff.
+        if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with 'ref: \${{ github.event.pull_request.head.sha }}' and 'fetch-depth: 0' before this action."
+          exit 1
+        fi
         git diff --no-ext-diff "${PR_BASE_SHA}...${PR_HEAD_SHA}" > pr.diff
 
         # Build the set of (path, RIGHT-side line) pairs GitHub will accept an inline
