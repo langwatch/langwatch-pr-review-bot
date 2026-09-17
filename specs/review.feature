@@ -7,10 +7,15 @@ Feature: Automated PR review
   Background:
     Given the pull request targets "main"
 
-  Scenario: Reviewer does not run when prerequisites or credentials are missing
-    Given one or more prerequisite checks have not passed, or reviewer credentials are missing
+  Scenario: Prerequisites are not satisfied
+    Given one or more prerequisite checks have not passed
     When the pipeline runs
     Then the PR reviewer does not run
+
+  Scenario: Reviewer credentials are missing
+    Given the reviewer credentials are missing
+    When the pipeline runs
+    Then the run fails with a clear error before any review
 
   Scenario: Blocking findings request changes and notify Slack
     Given all prerequisite checks are green
@@ -29,15 +34,19 @@ Feature: Automated PR review
     And each finding carries a priority and states whether it is blocking
 
   Scenario: Reviewer output cannot be used
-    Given the PR reviewer returns findings that do not match the expected shape, or fails to complete
-    When the pipeline extracts the findings
+    Given all prerequisite checks are green
+    When the PR reviewer fails to complete or returns findings in an unusable shape
     Then the run fails with a clear error
 
-  Scenario: A stale reviewer thread does not block the next review
-    Given a review thread was opened by the automated reviewer and is unresolved
+  Scenario: A reviewer-opened thread with no human reply does not block the next review
+    Given an unresolved review thread opened by the automated reviewer with no human reply
     When the pipeline runs
-    Then the PR reviewer runs if the thread has no human reply
-    And the PR reviewer does not run if a human has replied in the thread
+    Then the PR reviewer runs
+
+  Scenario: A human reply in a reviewer-opened thread blocks the next review
+    Given an unresolved review thread opened by the automated reviewer where a human has replied
+    When the pipeline runs
+    Then the PR reviewer does not run
 
   Scenario: A follow-up review remembers earlier findings
     Given a pull request that was already reviewed once and has since been updated
