@@ -53,11 +53,12 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer does not run
 
-  Scenario: A follow-up review remembers earlier findings
-    Given a pull request that was already reviewed once and has since been updated
-    When the PR reviewer evaluates the updated pull request
-    Then each earlier finding is marked resolved, still open, or superseded
-    And any new findings are reported
+  Scenario: A follow-up review omits resolved findings
+    Given an earlier review with findings
+    When a new push resolves some of them
+    Then the follow-up review omits the resolved findings
+    And restates the remaining ones as first-time findings
+    And no finding carries a resolved, still-open, superseded, or NEW label
 
   Scenario: A fork pull request is skipped
     Given a pull request opened from a fork
