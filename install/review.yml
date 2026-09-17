@@ -19,10 +19,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Pin @main for now; tag and pin @v1 once released (see README follow-up).
+      # Pin @main for now; tag and pin @v1 once released.
       - uses: langwatch/langwatch-pr-review-bot@main
         with:
-          review_label: ai-review
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}

@@ -17,7 +17,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Reviewer is read-only and cannot edit the repository.
 - PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
 - The bot installs as a composite GitHub Action; a target repo adds a thin caller workflow (checkout + `uses:`) and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
-- An optional label gate (`review_label`) restricts the review to PRs carrying that label; empty means always on.
+- An optional label gate (`review_label`) restricts the review to PRs carrying that label when set; empty means always on.
 - Fork PRs are skipped, because secrets are unavailable there.
 - Slack notification is opt-out: `slack_notify: false` suppresses it, and only an explicit false disables it.
 - `extra_instructions` appends caller-workflow guidance to the review prompt; it is reviewed by humans as a workflow change.
@@ -40,7 +40,7 @@ Add `.github/workflows/review.yml` to your repo (copy from [`install/review.yml`
 name: PR Review Bot
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
 permissions:
   contents: read
   pull-requests: write
@@ -54,13 +54,12 @@ jobs:
           fetch-depth: 0
       - uses: langwatch/langwatch-pr-review-bot@main
         with:
-          review_label: ai-review
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
 ```
 
-Keep `labeled` in the event types so applying the label triggers a run. Pin the action at `@main` for now; once a `v1` tag is cut, pin `@v1` instead (follow-up).
+Pin the action at `@main` for now; once a `v1` tag is cut, pin `@v1` instead. If you set `review_label`, also add `labeled` to the trigger `types`.
 
 ### Secrets
 
@@ -164,7 +163,7 @@ Findings are delta-aware: each carries a stable `id` and a `status` of `new` or 
 
 Claude Code stores each session transcript under `~/.claude/projects`. The workflow caches that directory with `actions/cache`, keyed by PR (`claude-session-<repo_id>-pr-<N>-<run_id>`, with a `-pr-<N>-` restore prefix). The review step also writes the run's `session_id` to a small file inside the cached directory. On the next run for the same PR, if that id and its transcript are present, the review resumes with `claude -p --resume "$SESSION_ID"`; otherwise it starts fresh. The save step runs `if: always()`, so the conversation persists even when blocking findings fail the job.
 
-Resuming gives the reviewer a memory of its earlier findings. A follow-up review re-checks each previous finding against the current diff — resolved, still open, or superseded — instead of re-deriving from scratch and silently reversing itself.
+Resuming gives the reviewer a memory of its earlier findings. The next review re-checks each previous finding against the current diff — resolved, still open, or superseded — instead of re-deriving from scratch and silently reversing itself.
 
 ### Priorities and blocking
 
