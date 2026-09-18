@@ -314,8 +314,10 @@ runs:
         # even off stdin an unbounded bundle would bury the reviewer in noise. Cap the
         # diff at DIFF_BYTE_BUDGET; beyond it the reviewer sees only the shown prefix
         # and is told the evidence is partial, so it never claims coverage of unseen
-        # files. The budget is documented and lives at the top of the review step.
-        DIFF_BYTE_BUDGET=$((2 * 1024 * 1024))   # 2 MiB
+        # files. The budget is 512 KiB: roughly what one thorough review pass can read
+        # in full, trading completeness for precision on large diffs. The budget is
+        # documented and lives at the top of the review step.
+        DIFF_BYTE_BUDGET=$((512 * 1024))   # 512 KiB
 
         diff_total_bytes="$(wc -c < pr.diff | tr -d ' ')"
         total_files="$(grep -c '^diff --git ' pr.diff || true)"
@@ -323,7 +325,9 @@ runs:
         shown_files="$total_files"
         if [[ "$diff_total_bytes" -gt "$DIFF_BYTE_BUDGET" ]]; then
           diff_truncated="true"
-          head -c "$DIFF_BYTE_BUDGET" pr.diff > pr.diff.shown
+          # Truncate at byte budget and drop the trailing partial line to avoid cutting mid-line.
+          # If the Nth byte is not a newline, drop that line entirely.
+          head -c "$DIFF_BYTE_BUDGET" pr.diff | sed -e '$d' > pr.diff.shown
           shown_files="$(grep -c '^diff --git ' pr.diff.shown || true)"
           printf '\n[diff truncated: %s bytes, budget %s bytes; files beyond this point were not shown]\n' \
             "$diff_total_bytes" "$DIFF_BYTE_BUDGET" >> pr.diff.shown
