@@ -625,6 +625,7 @@ runs:
 
         test -s pr-review-brief.md
 
+        # Contract with .claude/skills/pr-brief/TEMPLATE.md: its first line is the marker this grep checks.
         grep -q '^\*\*Risk in merging:\*\*' pr-review-brief.md || { echo "::error::Brief does not follow TEMPLATE.md (missing 'Risk in merging'); the reviewer likely could not read the template."; exit 1; }
 
         # One brief comment per PR, updated in place. The header line is signed and

@@ -1,4 +1,5 @@
 **Risk in merging:** <the concrete consequence or risk of merging this change>
+<!-- The first line above is the contract action.yml greps to confirm the brief followed this template. -->
 
 ## State
 
