@@ -52,7 +52,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - uses: langwatch/langwatch-pr-review-bot@main # Pin this to a reviewed commit SHA if your repository requires SHA-pinned actions (see README).
+      - uses: langwatch/langwatch-pr-review-bot@main
         with:
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

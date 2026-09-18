@@ -156,3 +156,13 @@ Feature: Automated PR review
     When the PR reviewer runs through the installed GitHub Action
     Then the rules, agent, and skills come from the action's own repository
     And the target repository customizes behavior only through workflow inputs
+
+  Scenario: Installed action reads its own rules and template from outside the working tree
+    Given the action is installed as a GitHub Action in another repository
+    And the Claude Code runner fetches the action into github.action_path (outside GITHUB_WORKSPACE)
+    When the review step runs
+    Then it reads REVIEW_RULES.md from the action directory using --add-dir "$ACTION_PATH"
+    And if the rules file cannot be read, it fails with "Reviewer could not read REVIEW_RULES.md"
+    When the brief step runs
+    Then it reads TEMPLATE.md from the action's .claude/skills/pr-brief/ using --add-dir "$ACTION_PATH"
+    And if the template file cannot be read, it fails with "Reviewer could not read TEMPLATE.md"
