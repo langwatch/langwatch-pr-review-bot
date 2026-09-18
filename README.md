@@ -15,7 +15,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
-- PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments (the bot's own review threads do not block the next run).
+- PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments. Threads from bots (CodeRabbit, Dependabot, this bot, etc.) never block the review; only comments from human users do.
 - The bot installs as a composite GitHub Action; a target repo adds a thin caller workflow (checkout + `uses:`) and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
 - An optional label gate (`review_label`) restricts the review to PRs carrying that label when set; empty means always on.
 - Fork PRs are skipped, because secrets are unavailable there.

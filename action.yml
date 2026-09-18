@@ -84,17 +84,16 @@ runs:
         cursor=""
         while :; do
           response="$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{login}}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{login,__typename}}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="$REPOSITORY_OWNER" \
             -f name="$REPOSITORY_NAME" \
             -F number="$PR_NUMBER" \
             -f cursor="$cursor")"
 
-          # Count only unresolved HUMAN threads. A thread is the bot's own if every
-          # comment in it was authored by this bot (github-actions); a human reply
-          # anywhere in the thread makes it a human thread, even when the bot opened
-          # it, so it still blocks the next run.
-          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.login // "" | startswith("github-actions") | not] | any)] | length' <<< "$response")"
+          # Count only unresolved HUMAN threads. Bots (this bot, CodeRabbit,
+          # Dependabot, etc.) never block; only a human comment does. A thread is human if
+          # any comment was authored by a non-bot user (including null/deleted users).
+          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.__typename // "User" | . != "Bot"] | any)] | length' <<< "$response")"
           if [[ "$unresolved" -gt 0 ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "PR has unresolved review comments; reviewer does not run."

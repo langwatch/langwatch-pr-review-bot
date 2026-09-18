@@ -53,6 +53,11 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer does not run
 
+  Scenario: A bot-only reply in a thread does not block the next review
+    Given an unresolved review thread with replies only from bots (CodeRabbit, Dependabot, etc.)
+    When the pipeline runs
+    Then the PR reviewer runs
+
   Scenario: A follow-up review tracks resolved and still-open findings
     Given an earlier review with findings
     When a new push resolves some of them
