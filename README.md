@@ -48,11 +48,11 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - uses: langwatch/langwatch-pr-review-bot@<sha> # main (replace with the commit you reviewed)
+      - uses: langwatch/langwatch-pr-review-bot@main # Pin this to a reviewed commit SHA if your repository requires SHA-pinned actions (see README).
         with:
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
