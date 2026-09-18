@@ -84,17 +84,16 @@ runs:
         cursor=""
         while :; do
           response="$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{login}}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{__typename}}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="$REPOSITORY_OWNER" \
             -f name="$REPOSITORY_NAME" \
             -F number="$PR_NUMBER" \
             -f cursor="$cursor")"
 
-          # Count only unresolved HUMAN threads. A thread is the bot's own if every
-          # comment in it was authored by this bot (github-actions); a human reply
-          # anywhere in the thread makes it a human thread, even when the bot opened
-          # it, so it still blocks the next run.
-          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.login // "" | startswith("github-actions") | not] | any)] | length' <<< "$response")"
+          # Count only unresolved HUMAN threads. Bots (this bot, CodeRabbit,
+          # Dependabot, etc.) never block; only a human comment does. A thread is human if
+          # any comment was authored by a non-bot user (including null/deleted users).
+          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.__typename // "User" | . != "Bot"] | any)] | length' <<< "$response")"
           if [[ "$unresolved" -gt 0 ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "PR has unresolved review comments; reviewer does not run."
@@ -144,7 +143,7 @@ runs:
 
     - name: Set up Node.js
       if: ${{ steps.context.outputs.skip != 'true' }}
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: '22'
 
@@ -178,7 +177,7 @@ runs:
     # run and restore-keys falls back to the latest cache for this PR.
     - name: Restore Claude session
       if: ${{ steps.context.outputs.skip != 'true' }}
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.claude/projects
         key: claude-session-${{ github.repository_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
@@ -385,6 +384,7 @@ runs:
 
         rc=0
         claude -p "$review_prompt" \
+          --add-dir "$ACTION_PATH" \
           "${resume_args[@]}" \
           --agent pr-reviewer \
           --setting-sources user \
@@ -609,6 +609,7 @@ runs:
 
         rc=0
         claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
+          --add-dir "$ACTION_PATH" \
           --continue \
           --agent pr-reviewer \
           --setting-sources user \
@@ -623,6 +624,9 @@ runs:
         fi
 
         test -s pr-review-brief.md
+
+        # Contract with .claude/skills/pr-brief/TEMPLATE.md: its first line is the marker this grep checks.
+        grep -q '^\*\*Risk in merging:\*\*' pr-review-brief.md || { echo "::error::Brief does not follow TEMPLATE.md (missing 'Risk in merging'); the reviewer likely could not read the template."; exit 1; }
 
         # One brief comment per PR, updated in place. The header line is signed and
         # stamped with the head sha7, then the marker, then the brief body. Find the
@@ -664,14 +668,14 @@ runs:
     # when blocking findings will fail the job, so memory still persists.
     - name: Save Claude session
       if: ${{ always() && steps.context.outputs.skip != 'true' }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.claude/projects
         key: claude-session-${{ github.repository_id }}-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
 
     - name: Upload human review brief
       if: ${{ always() && hashFiles('pr-review-brief.md') != '' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: pr-review-brief
         path: pr-review-brief.md

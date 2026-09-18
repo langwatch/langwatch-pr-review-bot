@@ -53,6 +53,11 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer does not run
 
+  Scenario: A bot-only reply in a thread does not block the next review
+    Given an unresolved review thread with replies only from bots (CodeRabbit, Dependabot, etc.)
+    When the pipeline runs
+    Then the PR reviewer runs
+
   Scenario: A follow-up review tracks resolved and still-open findings
     Given an earlier review with findings
     When a new push resolves some of them
@@ -156,3 +161,9 @@ Feature: Automated PR review
     When the PR reviewer runs through the installed GitHub Action
     Then the rules, agent, and skills come from the action's own repository
     And the target repository customizes behavior only through workflow inputs
+
+  Scenario: Installed action reads its own rules and template
+    Given the action is installed in another repository
+    When the review runs
+    Then the reviewer reads the rules and brief template from the action's own directory
+    And a brief that does not follow the template fails the run
