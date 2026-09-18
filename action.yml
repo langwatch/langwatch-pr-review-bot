@@ -523,7 +523,7 @@ runs:
         # the reader that findings cover only the shown portion, with the file counts.
         body="${header}"
         if [[ "$diff_truncated" == "true" ]]; then
-          local budget_kib=$((DIFF_BYTE_BUDGET / 1024))
+          budget_kib=$((DIFF_BYTE_BUDGET / 1024))
           body+=$'\n'"Diff truncated at ${budget_kib} KiB; findings cover the shown portion only. (${shown_files} of ${total_files} files shown.)"
         fi
         body+=$'\n\n'
