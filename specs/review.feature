@@ -172,5 +172,22 @@ Feature: Automated PR review
     Given a pull request whose diff exceeds the reviewer's stdin input limit
     When the PR reviewer runs
     Then the PR title, description, and diff are written to a file referenced in the prompt
+    And the file is kept in the workspace alongside the other scratch files
     And no PR body or diff is piped to the reviewer on standard input
     And the review runs without exceeding the input size limit
+
+  Scenario: A diff larger than the byte budget is truncated before review
+    Given a pull request whose diff exceeds the documented diff byte budget
+    When the PR reviewer runs
+    Then only the first budget bytes of the diff are written into the review bundle
+    And the bundle ends with a truncation trailer stating the total and budget bytes
+    And the bundle records the total file count and the shown file count
+    And the prompt tells the reviewer the diff is partial and not to claim coverage of unseen files
+    And the review body begins with the signature "@LangWatchReviewBot"
+    And the review body then states the diff was truncated and findings cover the shown portion only
+
+  Scenario: A diff within the byte budget is reviewed whole
+    Given a pull request whose diff is within the documented diff byte budget
+    When the PR reviewer runs
+    Then the whole diff is written into the review bundle with no truncation trailer
+    And the review body carries no truncation notice
