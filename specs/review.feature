@@ -167,3 +167,10 @@ Feature: Automated PR review
     When the review runs
     Then the reviewer reads the rules and brief template from the action's own directory
     And a brief that does not follow the template fails the run
+
+  Scenario: Review prompt stays small regardless of PR size
+    Given a pull request whose diff exceeds the reviewer's stdin input limit
+    When the PR reviewer runs
+    Then the PR title, description, and diff are written to a file referenced in the prompt
+    And no PR body or diff is piped to the reviewer on standard input
+    And the review runs without exceeding the input size limit
