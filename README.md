@@ -52,14 +52,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - uses: langwatch/langwatch-pr-review-bot@main
+      - uses: langwatch/langwatch-pr-review-bot@<sha> # main (replace with the commit you reviewed)
         with:
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
 ```
 
-Pin the action at `@main` for now; once a `v1` tag is cut, pin `@v1` instead. If you set `review_label`, also add `labeled` to the trigger `types`.
+Pin to a commit SHA; repositories that require SHA-pinned actions reject tag and branch refs, including the actions nested inside this one. Repositories without this policy can use `@main` or `@v1` tags. If you set `review_label`, also add `labeled` to the trigger `types`.
 
 ### Secrets
 

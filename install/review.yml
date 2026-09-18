@@ -14,13 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Check out the PR head so the action can diff and inspect the working tree.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.x.x
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       # Pin @main for now; tag and pin @v1 once released.
-      - uses: langwatch/langwatch-pr-review-bot@main
+      - uses: langwatch/langwatch-pr-review-bot@<sha> # main (replace with the commit you reviewed)
         with:
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
