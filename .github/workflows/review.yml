@@ -1,7 +1,8 @@
 name: PR Review Bot
 
 # Dogfooding: this repo reviews its own PRs by calling its own composite action.
-# Inputs are left at their defaults (always-on, Slack enabled, base_branch=main).
+# Throwaway proof PR: base_branch and extra_instructions are set so the action
+# reviews this PR against feat/self-cleaning-threads instead of skipping it.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -28,6 +29,7 @@ jobs:
       - uses: ./
         with:
           base_branch: feat/self-cleaning-threads
+          extra_instructions: "Throwaway proof PR (do not merge) validating PR #10 self-cleaning. The base_branch override and everything under proof/ are intentional test scaffolding; treat them as out of scope and do not report findings on them."
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
           slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
