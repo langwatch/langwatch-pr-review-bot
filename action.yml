@@ -81,22 +81,40 @@ runs:
           exit 0
         fi
 
+        # Identity rule (shared by the gate, the pre-review thread collection, the
+        # self-cleaning matcher and the dismissal filter): a review thread or review is
+        # THIS bot's OWN iff its root/review author login equals the login the bot itself
+        # posts as (self_login) AND the body carries the finding marker "<!-- id:"
+        # (threads) or the "**@LangWatchReviewBot**" prefix (reviews) — never login-only,
+        # never body-only. self_login is read from the login the token authenticates as
+        # (gh api user); the default GITHUB_TOKEN cannot call that endpoint and 403s, so
+        # it falls back to github-actions[bot]. The "[bot]" suffix differs between GraphQL
+        # (github-actions) and REST (github-actions[bot]) logins, so it is stripped on
+        # both sides before comparing.
+        self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
+        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
+        self_norm="${self_login%\[bot\]}"
+
         cursor=""
         while :; do
           response="$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:1){nodes{author{__typename}}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:1){nodes{author{__typename,login},body}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="$REPOSITORY_OWNER" \
             -f name="$REPOSITORY_NAME" \
             -F number="$PR_NUMBER" \
             -f cursor="$cursor")"
 
-          # Count only unresolved threads whose ROOT (first) comment is human-authored.
-          # A thread blocks the next run only when a human OPENED it. Bots (this bot's own
-          # findings, CodeRabbit, Dependabot, etc.) never block, even after a human replies
-          # in the thread, so a reviewer can discuss a bot finding in place without
-          # silencing the next review. The root comment is nodes[0] (comments are returned
-          # oldest first); replies are ignored on purpose.
-          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select((.comments.nodes[0].author.__typename // "User") != "Bot")] | length' <<< "$response")"
+          # A thread blocks the next run only when a HUMAN opened it: its root comment is
+          # neither another bot (GraphQL __typename "Bot": CodeRabbit, Dependabot, etc.)
+          # nor this bot's own finding (self_login + "<!-- id:" marker — the marker keeps
+          # a human PAT owner's own genuine thread blocking even when the bot posts under
+          # that same PAT login). The root comment is nodes[0] (oldest first); replies are
+          # ignored on purpose.
+          unresolved="$(jq --arg self "$self_norm" '[.data.repository.pullRequest.reviewThreads.nodes[]
+            | select(.isResolved == false)
+            | (.comments.nodes[0]) as $r
+            | select((($r.author.__typename // "User") != "Bot")
+                     and ((((($r.author.login // "") | sub("\\[bot\\]$";"")) == $self) and (($r.body // "") | contains("<!-- id:"))) | not))] | length' <<< "$response")"
           if [[ "$unresolved" -gt 0 ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "PR has unresolved review comments; reviewer does not run."
@@ -339,17 +357,24 @@ runs:
 
         # US-4: give the reviewer the human replies on its own finding threads so it
         # can ACCEPT a finding a reply refutes or defers instead of re-raising it.
-        # Fetch each unresolved thread rooted in this bot's finding comment (a Bot
-        # root carrying a <!-- id:X --> marker) with its replies, and render a
+        # Fetch each unresolved thread rooted in this bot's finding comment (root login
+        # == self_login carrying a <!-- id:X --> marker) with its replies, and render a
         # <threads> block placed INSIDE the untrusted <review-input> fence — reply
         # text is PR-controlled and is data, never instructions. Best-effort: on any
         # failure the reviewer simply sees no <threads> block and reviews as before.
+        # self_login = the login this token posts as, for the shared identity rule (see
+        # the "Gather PR context" step). This runs BEFORE the review is posted, so it
+        # comes from `gh api user` (default GITHUB_TOKEN 403s -> github-actions[bot]).
+        self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
+        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
+        self_norm="${self_login%\[bot\]}"
+
         reviewer_threads_file="${PWD}/reviewer-threads.json"
         echo '[]' > "$reviewer_threads_file"
         u4_cursor=""
         while :; do
           if ! gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:50){nodes{author{__typename},authorAssociation,body}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:50){nodes{author{__typename,login},authorAssociation,body}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="${REPOSITORY%%/*}" \
             -f name="${REPOSITORY##*/}" \
             -F number="$PR_NUMBER" \
@@ -357,14 +382,14 @@ runs:
             || ! jq -e '.data.repository.pullRequest.reviewThreads' u4-page.json >/dev/null 2>&1; then
             break
           fi
-          # Own finding threads are identified token-agnostically by the root comment's
-          # <!-- id:X --> marker AND the finding signature (**[P0..2 …]**), never by a
-          # login string, so a user-PAT github_token works too. Replies keep their
+          # Own finding threads are identified by the shared rule: root author login ==
+          # self_login AND the root body carries a <!-- id:X --> marker. A human quoting a
+          # finding (a different login) is therefore never picked up. Replies keep their
           # authorAssociation so non-members can be dropped before acceptance.
-          jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]
+          jq -s --arg self "$self_norm" '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]
                  | select(.isResolved == false)
                  | (.comments.nodes[0]) as $root
-                 | select(($root.body | test("<!-- id:[^ ]+ -->")) and ($root.body | test("\\*\\*\\[P[012]")))
+                 | select(((($root.author.login // "") | sub("\\[bot\\]$";"")) == $self) and ($root.body | test("<!-- id:[^ ]+ -->")))
                  | ([$root.body | scan("<!-- id:([^ ]+) -->")] | first) as $cap
                  | select($cap != null)
                  | {id: $cap[0], replies: [.comments.nodes[1:][] | {authorType: (.author.__typename // "User"), association: (.authorAssociation // "NONE"), body: .body}]}
@@ -737,17 +762,25 @@ runs:
         prev_ids_json="$(jq -c '.prev_ids' cleanup-context.json)"
         cleanup_sha7="${PR_HEAD_SHA:0:7}"
 
-        # Fetch every review thread's ROOT comment ONCE (id, resolved state, root body)
-        # and share it across both resolution loops. Own finding threads are matched
-        # token-agnostically by the root body's <!-- id:X --> marker AND finding
-        # signature (**[P0..2 …]**) — never by a login string — so a user-PAT
-        # github_token identifies them too.
+        # self_login for the shared identity rule (see "Gather PR context"). The review
+        # was posted this run, so it comes from review-response.json's .user.login
+        # (falling back to gh api user, then github-actions[bot]) — this is exactly the
+        # login the bot's own threads and reviews are authored under.
+        self_login="$(jq -r '.user.login // empty' review-response.json)"
+        [[ -n "$self_login" ]] || self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
+        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
+        self_norm="${self_login%\[bot\]}"
+
+        # Fetch every review thread's ROOT comment ONCE (id, resolved state, author login,
+        # body) and share it across both resolution loops. Own finding threads are matched
+        # by the shared rule: root login == self_login AND the root body carries the
+        # <!-- id:X --> marker — never login-only, never body-only.
         echo '[]' > review-threads.json
         thread_cursor=""
         threads_ok="true"
         while :; do
           if ! gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id,isResolved,comments(first:1){nodes{body}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id,isResolved,comments(first:1){nodes{author{login},body}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="${REPOSITORY%%/*}" \
             -f name="${REPOSITORY##*/}" \
             -F number="$PR_NUMBER" \
@@ -755,7 +788,7 @@ runs:
             || ! jq -e '.data.repository.pullRequest.reviewThreads' thread-page.json >/dev/null 2>&1; then
             threads_ok="false"; break
           fi
-          jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, rootBody: (.comments.nodes[0].body // "")}]' \
+          jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, rootLogin: (.comments.nodes[0].author.login // ""), rootBody: (.comments.nodes[0].body // "")}]' \
             review-threads.json thread-page.json > review-threads.tmp && mv review-threads.tmp review-threads.json
           has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' thread-page.json)"
           [[ "$has_next" == "true" ]] || break
@@ -772,7 +805,7 @@ runs:
             echo "::warning::Could not fetch review threads; finding '${cid}' was not resolved."
             return
           fi
-          cthread="$(jq -c --arg m "$cmarker" '[.[] | select((.rootBody | contains($m)) and (.rootBody | test("\\*\\*\\[P[012]")))] | first // empty' review-threads.json)"
+          cthread="$(jq -c --arg m "$cmarker" --arg self "$self_norm" '[.[] | select((((.rootLogin // "") | sub("\\[bot\\]$";"")) == $self) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
           if [[ -z "$cthread" ]]; then
             echo "::warning::Finding '${cid}' has no inline thread rooted in this bot; nothing resolved."
             return
@@ -832,17 +865,18 @@ runs:
         # US-3 dismiss: when THIS review approves, dismiss the bot's own earlier
         # changes-requested reviews so the merge status matches the current verdict.
         # Runs regardless of has_prev — the first approving review can still supersede an
-        # earlier changes-requested one. A review is the bot's OWN iff its body begins
-        # with the **@LangWatchReviewBot** signature — matched by prefix, not by login,
-        # so a user-PAT-posted review is recognised too. Never the review just posted;
-        # nothing dismissed on REQUEST_CHANGES.
+        # earlier changes-requested one. A review is the bot's OWN by the shared rule: its
+        # author login == self_login AND its body begins with the **@LangWatchReviewBot**
+        # signature — never login-only (a human review under a shared PAT login without the
+        # signature is left alone) and never body-only (a human quoting the signature is
+        # left alone). Never the review just posted; nothing dismissed on REQUEST_CHANGES.
         if [[ "$event" == "APPROVE" ]]; then
           posted_review_id="$(jq -r '.id // empty' review-response.json)"
           if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
             jq -s 'add // []' all-reviews-raw.json > all-reviews.json
             dismiss_msg="Superseded by \`${cleanup_sha7}\` review."
-            stale_ids="$(jq -r --arg posted "$posted_review_id" \
-              '[.[] | select(.state == "CHANGES_REQUESTED" and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
+            stale_ids="$(jq -r --arg posted "$posted_review_id" --arg self "$self_norm" \
+              '[.[] | select(.state == "CHANGES_REQUESTED" and ((((.user.login // "") | sub("\\[bot\\]$";"")) == $self)) and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
               all-reviews.json)"
             for rid in $stale_ids; do
               if gh api --method PUT \
