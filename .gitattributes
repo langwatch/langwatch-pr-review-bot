@@ -1,0 +1,5 @@
+# Files matching these patterns are treated as generated: the PR review bot elides
+# them from the review diff (attributes are resolved on the base branch). The proof
+# fixture specs/fixtures/*.generated.json exercises that path; specs/fixtures/*.txt
+# (e.g. large-diff-proof.txt) stays unmarked so it is reviewed normally.
+specs/fixtures/*.generated.json linguist-generated=true

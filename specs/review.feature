@@ -193,16 +193,33 @@ Feature: Automated PR review
     And the review body carries no truncation notice
 
   Scenario: Generated files are elided from the review diff and reported
-    Given a pull request that changes files the target repository marks "linguist-generated=true" in its .gitattributes
+    Given a pull request that changes files marked "linguist-generated=true" in the base branch .gitattributes
     When the PR reviewer runs
     Then those files are excluded from the diff before the byte budget is applied
     And the review bundle names the elided generated files and their count
-    And the prompt tells the reviewer the files were elided as generated and not to review their contents line-by-line
+    And the prompt tells the reviewer the count of elided files and not to review their contents line-by-line
+    And the prompt does not contain the elided file names
     And the review body states how many generated files were elided
     And the total file count still includes the elided generated files
 
+  Scenario: Generated attributes are read from the base branch, not the pull request head
+    Given a pull request that marks one of its own changed files "linguist-generated=true" only in the head .gitattributes
+    And that file is not marked generated on the base branch
+    When the PR reviewer runs
+    Then that file is NOT elided from the review diff
+
+  Scenario: Five or fewer generated files are listed by basename in the body
+    Given a pull request with five or fewer elided generated files
+    When the review is posted
+    Then the review body lists the elided files by basename after the count
+
+  Scenario: More than five generated files collapse to a count in the body
+    Given a pull request with more than five elided generated files
+    When the review is posted
+    Then the review body states only the count of elided files with no file list
+
   Scenario: A pull request with no generated files leaves the diff untouched
-    Given a pull request whose changed files are not marked "linguist-generated=true"
+    Given a pull request whose changed files are not marked "linguist-generated=true" on the base branch
     When the PR reviewer runs
     Then the review diff is the same as the unelided diff
     And the review body carries no generated-files notice
