@@ -685,8 +685,11 @@ runs:
               continue
             fi
             marker="<!-- id:${fid} -->"
-            # Only a thread rooted in THIS bot's finding comment is ever touched.
-            thread_json="$(jq -c --arg m "$marker" '[.[] | select(.rootType == "Bot" and .rootLogin == "github-actions[bot]" and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
+            # Only a thread rooted in THIS bot's finding comment is ever touched:
+            # a Bot-authored root whose body carries this finding's marker. The
+            # GraphQL author.login for the Actions bot is "github-actions" (the
+            # "[bot]" suffix is REST-only), so match it by prefix.
+            thread_json="$(jq -c --arg m "$marker" '[.[] | select(.rootType == "Bot" and (.rootLogin | startswith("github-actions")) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
             if [[ -z "$thread_json" ]]; then
               echo "::warning::Fixed finding '${fid}' has no inline thread rooted in this bot; nothing resolved."
               continue
