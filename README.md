@@ -98,7 +98,8 @@ context checks
         |
         +--> skip unless base branch matches base_branch (default main)
         |
-        +--> block if HUMAN review threads are unresolved
+        +--> block only when a HUMAN opened an unresolved thread
+        |     (replies on the bot's own findings never block)
         |
         v
 action's own repo (trusted rules/agent/skills)

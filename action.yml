@@ -90,10 +90,13 @@ runs:
             -F number="$PR_NUMBER" \
             -f cursor="$cursor")"
 
-          # Count only unresolved HUMAN threads. Bots (this bot, CodeRabbit,
-          # Dependabot, etc.) never block; only a human comment does. A thread is human if
-          # any comment was authored by a non-bot user (including null/deleted users).
-          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select([.comments.nodes[].author.__typename // "User" | . != "Bot"] | any)] | length' <<< "$response")"
+          # Count only unresolved threads whose ROOT (first) comment is human-authored.
+          # A thread blocks the next run only when a human OPENED it. Bots (this bot's own
+          # findings, CodeRabbit, Dependabot, etc.) never block, even after a human replies
+          # in the thread, so a reviewer can discuss a bot finding in place without
+          # silencing the next review. The root comment is nodes[0] (comments are returned
+          # oldest first); replies are ignored on purpose.
+          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | select((.comments.nodes[0].author.__typename // "User") != "Bot")] | length' <<< "$response")"
           if [[ "$unresolved" -gt 0 ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "PR has unresolved review comments; reviewer does not run."

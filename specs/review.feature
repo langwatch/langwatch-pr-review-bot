@@ -48,8 +48,14 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer runs
 
-  Scenario: A human reply in a reviewer-opened thread blocks the next review
-    Given an unresolved review thread opened by the automated reviewer where a human has replied
+  Scenario: A human reply on the bot's own finding thread does not block the next review
+    Given an unresolved review thread whose first comment is this bot's finding
+    And a human has replied in that thread
+    When the pipeline runs
+    Then the PR reviewer runs
+
+  Scenario: A human-opened unresolved thread still blocks the next review
+    Given an unresolved review thread whose first comment is human-authored
     When the pipeline runs
     Then the PR reviewer does not run
 
