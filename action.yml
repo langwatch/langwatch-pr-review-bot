@@ -713,6 +713,35 @@ runs:
             echo "Resolved thread for fixed finding '${fid}'."
           done < <(jq -r '.[]' <<< "$fixed_ids_json")
 
+          # US-3: when THIS review approves, dismiss the bot's own earlier
+          # "changes requested" reviews so the merge status reflects the current
+          # verdict. Only this bot's CHANGES_REQUESTED reviews signed
+          # **@LangWatchReviewBot** are touched — never a human's or another
+          # bot's review, and never the review just posted. Dismisses nothing on
+          # REQUEST_CHANGES.
+          if [[ "$event" == "APPROVE" ]]; then
+            posted_review_id="$(jq -r '.id // empty' review-response.json)"
+            if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
+              jq -s 'add // []' all-reviews-raw.json > all-reviews.json
+              dismiss_msg="Superseded by \`${PR_HEAD_SHA:0:7}\` review."
+              stale_ids="$(jq -r --arg posted "$posted_review_id" \
+                '[.[] | select(.user.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED" and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
+                all-reviews.json)"
+              for rid in $stale_ids; do
+                if gh api --method PUT \
+                  "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${rid}/dismissals" \
+                  -f message="$dismiss_msg" \
+                  -f event="DISMISS" >/dev/null 2>&1; then
+                  echo "Dismissed superseded changes-requested review '${rid}'."
+                else
+                  echo "::warning::Could not dismiss superseded review '${rid}'."
+                fi
+              done
+            else
+              echo "::warning::Could not list reviews to dismiss superseded changes-requested reviews."
+            fi
+          fi
+
           set -e
         fi
         echo "Self-cleaning complete."

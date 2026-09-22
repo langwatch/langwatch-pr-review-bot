@@ -95,6 +95,18 @@ Feature: Automated PR review
     Then no reply is posted to that thread
     And the thread is not mutated again
 
+  Scenario: A clean re-review dismisses the bot's prior changes-requested reviews
+    Given the bot posted an earlier "changes requested" review on this pull request
+    When the new review approves the pull request
+    Then each earlier changes-requested review by the bot is dismissed as superseded
+    And the review just posted is not dismissed
+    And no human or other-bot review is dismissed
+
+  Scenario: A still-blocking re-review keeps the bot's prior changes-requested review
+    Given the bot posted an earlier "changes requested" review on this pull request
+    When the new review still requests changes
+    Then no review is dismissed
+
   Scenario: Cleanup failure does not fail the review job
     Given a thread resolution or review dismissal call fails
     When self-cleaning runs

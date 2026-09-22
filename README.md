@@ -172,6 +172,9 @@ Resuming gives the reviewer a memory of its earlier findings. The next review re
 After the review is posted and the run's findings are recorded, the action cleans up its own past output so the PR shows only open work. This runs only when a previous review exists (the first review on a PR skips it), never deletes anything, and every step is best-effort: a failure is a workflow warning naming the item and never fails the job.
 
 - **Resolved-finding threads.** For each finding the new review reports fixed — an id in the top-level `resolved` array, or a prior id that has vanished from both `findings` and `resolved` (gone means fixed) — the action finds the review thread whose root comment carries that finding's `<!-- id:<id> -->` marker, posts one reply `` **@LangWatchReviewBot** Fixed as of `<sha7>`. ``, and resolves the thread. A fixed finding that was only in the review body (no inline thread) is reported as a warning instead. Already-resolved threads are left untouched, so re-running on an unchanged diff posts no duplicate reply. Threads not rooted in this bot's own comment are never touched.
+- **Stale changes-requested reviews.** When the new review approves the PR, the action dismisses each of the bot's own earlier reviews that are still in `CHANGES_REQUESTED` and signed `**@LangWatchReviewBot**`, with the message `` Superseded by `<sha7>` review. ``, so the merge status reflects the current verdict. It never dismisses the review just posted, a human review, or another bot's review, and it dismisses nothing while the new review still requests changes.
+
+The bot acts through the workflow's `github_token`; `pull-requests: write` is sufficient for both the [`resolveReviewThread`](https://docs.github.com/en/graphql/reference/mutations#resolvereviewthread) mutation and the [dismiss-a-review](https://docs.github.com/en/rest/pulls/reviews#dismiss-a-review-for-a-pull-request) REST call.
 
 ### Priorities and blocking
 
