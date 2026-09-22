@@ -98,3 +98,8 @@ Each rule below is tagged with its default priority. Subjective rules also carry
 - No historical narration of removed or changed code — **P2**
   - How to judge: cite the comment describing what the code used to do.
 - No commented-out code or temporary notes left behind — **P2**
+
+## Anchoring
+
+- Anchor a finding on the line that CAUSES the defect when that file is present in the shown diff.
+  - How to judge: if the causal file is not in the shown diff (for example, it was elided as generated or truncated away), anchor on the most visible symptom line instead and name the causal `path:line` in the `fix`.

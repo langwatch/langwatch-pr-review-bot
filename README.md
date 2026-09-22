@@ -29,6 +29,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Each run posts a NEW delta-aware review: findings carry a stable `id` and `status` (`new`/`open`), the reviewer returns a top-level `resolved` array, and the body shows the `Since <sha7>` delta. Only `new` findings get inline comments.
 - Findings persist across runs to `last-review.json` in the cached session directory, so the next run knows what it reported before.
 - The PR diff is bounded at 512 KiB. Diffs larger than this budget are truncated before review; the review body reports truncation with the shown and total file counts. The reviewer is notified the evidence is partial and must not claim coverage of unseen files.
+- Files the target repository marks `linguist-generated=true` in its `.gitattributes` are elided from the review diff before the byte budget is applied, so large generated blobs (prisma manifests, big fixtures) do not crowd out human-authored files. The review body and reviewer prompt name the elided files and their count. To opt a file in, add a line such as `path/to/file.generated.json linguist-generated=true` to the target repo's `.gitattributes`; the literal value `true` is required (`set` or any other value keeps the file in the diff).
 - After the automated review completes, the workflow continues the same Claude session with the `pr-brief` skill, generates the human review brief from its template, upserts it as a single marker-identified PR comment (updated in place across runs), and uploads it as an artifact.
 
 ## Install in your repository
