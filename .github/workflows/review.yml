@@ -8,8 +8,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  # contents: write is under test for PR #10 US-2: GraphQL resolveReviewThread is
-  # reported to need it in addition to pull-requests: write under the default GITHUB_TOKEN.
+  # contents: write lets the default GITHUB_TOKEN resolve fixed findings' threads
+  # (resolveReviewThread), verified on proof PR #11.
   contents: write
   pull-requests: write
 
