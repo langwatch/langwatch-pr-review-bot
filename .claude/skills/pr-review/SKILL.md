@@ -63,6 +63,8 @@ Do NOT accept on:
 
 A previous finding is in exactly one of `findings`, `resolved`, or `accepted`.
 
+The input may also carry a `<dismissed-findings>` block listing finding ids a maintainer has already dismissed. Never place any of those ids in `findings` or `resolved`; they are handled as accepted automatically, so treat them as already closed.
+
 The `id` is a stable short slug you assign (e.g. `retry-swallows-error`); reuse it verbatim across runs so an open finding keeps its identity. `status` is bookkeeping metadata only — the `summary`/`fix` text must still read as if stated for the first time. Never narrate history in the text ("still open", "carried over", "regression"). Do not reverse earlier guidance without a substantiated reason.
 
 ## Review areas
