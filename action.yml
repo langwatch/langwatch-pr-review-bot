@@ -84,7 +84,7 @@ runs:
         cursor=""
         while :; do
           response="$(gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:100){nodes{author{__typename}}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:1){nodes{author{__typename}}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="$REPOSITORY_OWNER" \
             -f name="$REPOSITORY_NAME" \
             -F number="$PR_NUMBER" \
@@ -349,7 +349,7 @@ runs:
         u4_cursor=""
         while :; do
           if ! gh api graphql \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:50){nodes{author{login,__typename},body}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved,comments(first:50){nodes{author{__typename},authorAssociation,body}}}pageInfo{hasNextPage,endCursor}}}}}' \
             -f owner="${REPOSITORY%%/*}" \
             -f name="${REPOSITORY##*/}" \
             -F number="$PR_NUMBER" \
@@ -357,20 +357,38 @@ runs:
             || ! jq -e '.data.repository.pullRequest.reviewThreads' u4-page.json >/dev/null 2>&1; then
             break
           fi
+          # Own finding threads are identified token-agnostically by the root comment's
+          # <!-- id:X --> marker AND the finding signature (**[P0..2 …]**), never by a
+          # login string, so a user-PAT github_token works too. Replies keep their
+          # authorAssociation so non-members can be dropped before acceptance.
           jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]
                  | select(.isResolved == false)
                  | (.comments.nodes[0]) as $root
-                 | select(($root.author.__typename // "User") == "Bot")
+                 | select(($root.body | test("<!-- id:[^ ]+ -->")) and ($root.body | test("\\*\\*\\[P[012]")))
                  | ([$root.body | scan("<!-- id:([^ ]+) -->")] | first) as $cap
                  | select($cap != null)
-                 | {id: $cap[0], replies: [.comments.nodes[1:][] | {authorType: (.author.__typename // "User"), body: .body}]}
+                 | {id: $cap[0], replies: [.comments.nodes[1:][] | {authorType: (.author.__typename // "User"), association: (.authorAssociation // "NONE"), body: .body}]}
                  | select((.replies | length) > 0)]' \
             "$reviewer_threads_file" u4-page.json > u4-merged.json && mv u4-merged.json "$reviewer_threads_file"
           u4_has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' u4-page.json)"
           [[ "$u4_has_next" == "true" ]] || break
           u4_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' u4-page.json)"
         done
-        threads_block="$(jq -r 'if (. | length) == 0 then "" else "<threads>\n" + ([.[] | "<thread id=\"" + .id + "\">\n" + ([.replies[] | "<reply author-type=\"" + .authorType + "\">" + (.body | gsub("\n"; " ")) + "</reply>"] | join("\n")) + "\n</thread>"] | join("\n")) + "\n</threads>" end' "$reviewer_threads_file")"
+        # Authorization: only OWNER/MEMBER/COLLABORATOR replies may accept a finding, so
+        # a drive-by comment from an outside account cannot close one. Drop the rest and
+        # log how many were dropped.
+        u4_dropped="$(jq '[.[].replies[] | select(.association as $a | (["OWNER","MEMBER","COLLABORATOR"] | index($a)) | not)] | length' "$reviewer_threads_file")"
+        if [[ "$u4_dropped" -gt 0 ]]; then
+          echo "Dropped ${u4_dropped} non-member reply/replies from the acceptance context."
+        fi
+        # Render <threads> from member replies only, XML-escaping &, <, > (in that
+        # order) so a reply body cannot forge a tag or break out of the <review-input>
+        # fence (e.g. a literal </review-input> in a reply).
+        threads_block="$(jq -r '
+          [.[] | {id, replies: [.replies[] | select(.association as $a | (["OWNER","MEMBER","COLLABORATOR"] | index($a)))]} | select((.replies | length) > 0)] as $t
+          | if ($t | length) == 0 then ""
+            else "<threads>\n" + ([$t[] | "<thread id=\"" + .id + "\">\n" + ([.replies[] | "<reply author-type=\"" + .authorType + "\">" + (.body | gsub("&";"&amp;") | gsub("<";"&lt;") | gsub(">";"&gt;") | gsub("\n"; " ")) + "</reply>"] | join("\n")) + "\n</thread>"] | join("\n")) + "\n</threads>"
+            end' "$reviewer_threads_file")"
 
         # The title, description, and (bounded) diff are written to a file in the
         # workspace, alongside pr.diff/commentable.json, and referenced by path. The
@@ -683,26 +701,109 @@ runs:
           echo "$body"
         } >> "$GITHUB_STEP_SUMMARY"
 
-        # ==================================================================
-        # Self-cleaning. Runs AFTER the review is posted and after
-        # last-review.json is written above. Every failure here is a
-        # ::warning:: naming the item and NEVER changes the job exit code
-        # (that is owned by the review_failed output and the final step).
-        # Nothing is ever deleted. Skipped on the first review of a PR:
-        # there is no prior state to reconcile.
-        # ==================================================================
-        if [[ "$has_prev" != "true" ]]; then
-          echo "First review on this PR; skipping self-cleaning (no previous review to reconcile)."
-        else
-          # errexit off for the whole block so one best-effort API failure warns
-          # instead of aborting the step (which would flip the job red).
-          set +e
+        # Hand the separate Self-cleaning step the state that does not survive a step
+        # boundary (shell vars do not cross steps; the *.json artifacts it also needs —
+        # findings.json, accepted.json, review-object.json, review-response.json — are
+        # already written into the workspace above).
+        jq -cn \
+          --argjson prev "$prev_ids_json" \
+          --arg ev "$event" \
+          --arg hp "$has_prev" \
+          '{prev_ids: $prev, event: $ev, has_prev: $hp}' > cleanup-context.json
 
-          # US-2: resolve the review threads of findings this run reports fixed.
-          # Fixed = ids in the top-level resolved[] PLUS prior ids that vanished
-          # from this run's findings[], resolved[] AND accepted[] — a dropped id is a
-          # product decision that a vanished finding is a fixed finding. Accepted ids
-          # (US-4) are excluded here so a deferred finding is not also called fixed.
+    - name: Self-cleaning
+      # Its own step (its own set +e scope) so a best-effort API failure here can never
+      # abort the review or flip the job red. always() so it still runs after a review
+      # that requested changes; guarded on the same skip gate and on the review having
+      # actually been posted (review-response.json present).
+      if: ${{ always() && steps.context.outputs.skip != 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        # errexit is on by default for composite bash steps; disable it so every failure
+        # below becomes a ::warning:: instead of aborting the step and flipping the job.
+        set +e
+        if [[ ! -f review-response.json || ! -f cleanup-context.json ]]; then
+          echo "No review was posted this run; nothing to self-clean."
+          exit 0
+        fi
+
+        has_prev="$(jq -r '.has_prev' cleanup-context.json)"
+        event="$(jq -r '.event' cleanup-context.json)"
+        prev_ids_json="$(jq -c '.prev_ids' cleanup-context.json)"
+        cleanup_sha7="${PR_HEAD_SHA:0:7}"
+
+        # Fetch every review thread's ROOT comment ONCE (id, resolved state, root body)
+        # and share it across both resolution loops. Own finding threads are matched
+        # token-agnostically by the root body's <!-- id:X --> marker AND finding
+        # signature (**[P0..2 …]**) — never by a login string — so a user-PAT
+        # github_token identifies them too.
+        echo '[]' > review-threads.json
+        thread_cursor=""
+        threads_ok="true"
+        while :; do
+          if ! gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id,isResolved,comments(first:1){nodes{body}}}pageInfo{hasNextPage,endCursor}}}}}' \
+            -f owner="${REPOSITORY%%/*}" \
+            -f name="${REPOSITORY##*/}" \
+            -F number="$PR_NUMBER" \
+            -f cursor="$thread_cursor" > thread-page.json 2>/dev/null \
+            || ! jq -e '.data.repository.pullRequest.reviewThreads' thread-page.json >/dev/null 2>&1; then
+            threads_ok="false"; break
+          fi
+          jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, rootBody: (.comments.nodes[0].body // "")}]' \
+            review-threads.json thread-page.json > review-threads.tmp && mv review-threads.tmp review-threads.json
+          has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' thread-page.json)"
+          [[ "$has_next" == "true" ]] || break
+          thread_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' thread-page.json)"
+        done
+
+        # One helper used by BOTH the fixed and accepted loops. It attempts to RESOLVE
+        # the thread FIRST and posts the reply ($2) only on success, so a token that
+        # cannot resolve never leaves a dangling "done" reply on a still-open thread.
+        cleanup_thread() {
+          local cid="$1" creply="$2" cmarker cthread ctid
+          cmarker="<!-- id:${cid} -->"
+          if [[ "$threads_ok" != "true" ]]; then
+            echo "::warning::Could not fetch review threads; finding '${cid}' was not resolved."
+            return
+          fi
+          cthread="$(jq -c --arg m "$cmarker" '[.[] | select((.rootBody | contains($m)) and (.rootBody | test("\\*\\*\\[P[012]")))] | first // empty' review-threads.json)"
+          if [[ -z "$cthread" ]]; then
+            echo "::warning::Finding '${cid}' has no inline thread rooted in this bot; nothing resolved."
+            return
+          fi
+          if [[ "$(jq -r '.isResolved' <<< "$cthread")" == "true" ]]; then
+            return   # idempotent: an already-resolved thread gets no reply and no mutation
+          fi
+          ctid="$(jq -r '.id' <<< "$cthread")"
+          if ! gh api graphql \
+            -f query='mutation($tid:ID!){resolveReviewThread(input:{threadId:$tid}){thread{isResolved}}}' \
+            -f tid="$ctid" 2>resolve-err.txt >/dev/null; then
+            echo "::warning::Could not resolve thread for finding '${cid}'; no reply posted. resolveReviewThread needs a github_token with repo write access — the default GITHUB_TOKEN is rejected with 'Resource not accessible by integration'. Detail: $(tr '\n' ' ' < resolve-err.txt)"
+            return
+          fi
+          if ! gh api graphql \
+            -f query='mutation($tid:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$tid,body:$body}){comment{id}}}' \
+            -f tid="$ctid" \
+            -f body="$creply" >/dev/null 2>&1; then
+            echo "::warning::Resolved the thread for finding '${cid}' but could not post its reply."
+            return
+          fi
+          echo "Resolved thread for finding '${cid}'."
+        }
+
+        if [[ "$has_prev" != "true" ]]; then
+          echo "First review on this PR; no fixed/accepted threads to reconcile."
+        else
+          # US-2 fixed set: resolved[] (minus this run's findings and accepted) PLUS
+          # prior ids that vanished from findings/resolved/accepted. Subtracting cur and
+          # accepted on BOTH terms stops a still-open or a deferred finding being called
+          # fixed.
           cur_ids_json="$(jq -c '[.[].id]' findings.json)"
           resolved_ids_json="$(jq -c '(.resolved // [])' review-object.json)"
           accepted_ids_json="$(jq -c '[.[].id]' accepted.json)"
@@ -711,139 +812,53 @@ runs:
             --argjson cur "$cur_ids_json" \
             --argjson res "$resolved_ids_json" \
             --argjson acc "$accepted_ids_json" \
-            '($res + ($prev - $cur - $res - $acc)) | unique')"
+            '(($res - $cur - $acc) + ($prev - $cur - $res - $acc)) | unique')"
 
-          # Fetch every review thread's ROOT comment (author + body + resolved
-          # state), paginating, so a fixed id can be matched to its thread by the
-          # "<!-- id:<id> -->" marker the inline comment embedded.
-          echo '[]' > review-threads.json
-          thread_cursor=""
-          threads_ok="true"
-          while :; do
-            if ! gh api graphql \
-              -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id,isResolved,comments(first:1){nodes{author{login,__typename},body}}}pageInfo{hasNextPage,endCursor}}}}}' \
-              -f owner="${REPOSITORY%%/*}" \
-              -f name="${REPOSITORY##*/}" \
-              -F number="$PR_NUMBER" \
-              -f cursor="$thread_cursor" > thread-page.json 2>/dev/null \
-              || ! jq -e '.data.repository.pullRequest.reviewThreads' thread-page.json >/dev/null 2>&1; then
-              threads_ok="false"; break
-            fi
-            jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, rootLogin: (.comments.nodes[0].author.login // ""), rootType: (.comments.nodes[0].author.__typename // "User"), rootBody: (.comments.nodes[0].body // "")}]' \
-              review-threads.json thread-page.json > review-threads.tmp && mv review-threads.tmp review-threads.json
-            has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' thread-page.json)"
-            [[ "$has_next" == "true" ]] || break
-            thread_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' thread-page.json)"
-          done
-
-          cleanup_sha7="${PR_HEAD_SHA:0:7}"
           while IFS= read -r fid; do
             [[ -n "$fid" ]] || continue
-            if [[ "$threads_ok" != "true" ]]; then
-              echo "::warning::Could not fetch review threads; fixed finding '${fid}' was not resolved."
-              continue
-            fi
-            marker="<!-- id:${fid} -->"
-            # Only a thread rooted in THIS bot's finding comment is ever touched:
-            # a Bot-authored root whose body carries this finding's marker. The
-            # GraphQL author.login for the Actions bot is "github-actions" (the
-            # "[bot]" suffix is REST-only), so match it by prefix.
-            thread_json="$(jq -c --arg m "$marker" '[.[] | select(.rootType == "Bot" and (.rootLogin | startswith("github-actions")) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
-            if [[ -z "$thread_json" ]]; then
-              echo "::warning::Fixed finding '${fid}' has no inline thread rooted in this bot; nothing resolved."
-              continue
-            fi
-            if [[ "$(jq -r '.isResolved' <<< "$thread_json")" == "true" ]]; then
-              # Idempotent: an already-resolved thread gets no reply and no mutation.
-              continue
-            fi
-            thread_id="$(jq -r '.id' <<< "$thread_json")"
-            reply_body="**@LangWatchReviewBot** Fixed as of \`${cleanup_sha7}\`."
-            if ! gh api graphql \
-              -f query='mutation($tid:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$tid,body:$body}){comment{id}}}' \
-              -f tid="$thread_id" \
-              -f body="$reply_body" >/dev/null 2>&1; then
-              echo "::warning::Could not post resolution reply for fixed finding '${fid}'."
-              continue
-            fi
-            if ! gh api graphql \
-              -f query='mutation($tid:ID!){resolveReviewThread(input:{threadId:$tid}){thread{isResolved}}}' \
-              -f tid="$thread_id" 2>resolve-err.txt >/dev/null; then
-              echo "::warning::Could not resolve thread for fixed finding '${fid}' (reply was posted): $(tr '\n' ' ' < resolve-err.txt)"
-              continue
-            fi
-            echo "Resolved thread for fixed finding '${fid}'."
+            cleanup_thread "$fid" "**@LangWatchReviewBot** Fixed as of \`${cleanup_sha7}\`."
           done < <(jq -r '.[]' <<< "$fixed_ids_json")
 
           # US-4: resolve the threads of findings a human reply accepted or deferred,
-          # with an "Accepted: <reason>" reply. Same matching, idempotency, and failure
-          # rules as US-2; reuses review-threads.json and threads_ok fetched above.
+          # replying "Accepted: <reason>".
           while IFS= read -r arow; do
             [[ -n "$arow" ]] || continue
             aid="$(jq -r '.id' <<< "$arow")"
             areason="$(jq -r '.reason' <<< "$arow")"
-            if [[ "$threads_ok" != "true" ]]; then
-              echo "::warning::Could not fetch review threads; accepted finding '${aid}' was not resolved."
-              continue
-            fi
-            amarker="<!-- id:${aid} -->"
-            athread="$(jq -c --arg m "$amarker" '[.[] | select(.rootType == "Bot" and (.rootLogin | startswith("github-actions")) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
-            if [[ -z "$athread" ]]; then
-              echo "::warning::Accepted finding '${aid}' has no inline thread rooted in this bot; nothing resolved."
-              continue
-            fi
-            if [[ "$(jq -r '.isResolved' <<< "$athread")" == "true" ]]; then
-              continue
-            fi
-            athread_id="$(jq -r '.id' <<< "$athread")"
-            areply="**@LangWatchReviewBot** Accepted: ${areason}"
-            if ! gh api graphql \
-              -f query='mutation($tid:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$tid,body:$body}){comment{id}}}' \
-              -f tid="$athread_id" \
-              -f body="$areply" >/dev/null 2>&1; then
-              echo "::warning::Could not post acceptance reply for finding '${aid}'."
-              continue
-            fi
-            if ! gh api graphql \
-              -f query='mutation($tid:ID!){resolveReviewThread(input:{threadId:$tid}){thread{isResolved}}}' \
-              -f tid="$athread_id" 2>resolve-err.txt >/dev/null; then
-              echo "::warning::Could not resolve accepted thread for finding '${aid}' (reply was posted): $(tr '\n' ' ' < resolve-err.txt)"
-              continue
-            fi
-            echo "Resolved thread for accepted finding '${aid}'."
+            cleanup_thread "$aid" "**@LangWatchReviewBot** Accepted: ${areason}"
           done < <(jq -c '.[]' accepted.json)
-
-          # US-3: when THIS review approves, dismiss the bot's own earlier
-          # "changes requested" reviews so the merge status reflects the current
-          # verdict. Only this bot's CHANGES_REQUESTED reviews signed
-          # **@LangWatchReviewBot** are touched — never a human's or another
-          # bot's review, and never the review just posted. Dismisses nothing on
-          # REQUEST_CHANGES.
-          if [[ "$event" == "APPROVE" ]]; then
-            posted_review_id="$(jq -r '.id // empty' review-response.json)"
-            if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
-              jq -s 'add // []' all-reviews-raw.json > all-reviews.json
-              dismiss_msg="Superseded by \`${PR_HEAD_SHA:0:7}\` review."
-              stale_ids="$(jq -r --arg posted "$posted_review_id" \
-                '[.[] | select(.user.login == "github-actions[bot]" and .state == "CHANGES_REQUESTED" and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
-                all-reviews.json)"
-              for rid in $stale_ids; do
-                if gh api --method PUT \
-                  "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${rid}/dismissals" \
-                  -f message="$dismiss_msg" \
-                  -f event="DISMISS" >/dev/null 2>&1; then
-                  echo "Dismissed superseded changes-requested review '${rid}'."
-                else
-                  echo "::warning::Could not dismiss superseded review '${rid}'."
-                fi
-              done
-            else
-              echo "::warning::Could not list reviews to dismiss superseded changes-requested reviews."
-            fi
-          fi
-
-          set -e
         fi
+
+        # US-3 dismiss: when THIS review approves, dismiss the bot's own earlier
+        # changes-requested reviews so the merge status matches the current verdict.
+        # Runs regardless of has_prev — the first approving review can still supersede an
+        # earlier changes-requested one. A review is the bot's OWN iff its body begins
+        # with the **@LangWatchReviewBot** signature — matched by prefix, not by login,
+        # so a user-PAT-posted review is recognised too. Never the review just posted;
+        # nothing dismissed on REQUEST_CHANGES.
+        if [[ "$event" == "APPROVE" ]]; then
+          posted_review_id="$(jq -r '.id // empty' review-response.json)"
+          if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
+            jq -s 'add // []' all-reviews-raw.json > all-reviews.json
+            dismiss_msg="Superseded by \`${cleanup_sha7}\` review."
+            stale_ids="$(jq -r --arg posted "$posted_review_id" \
+              '[.[] | select(.state == "CHANGES_REQUESTED" and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
+              all-reviews.json)"
+            for rid in $stale_ids; do
+              if gh api --method PUT \
+                "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${rid}/dismissals" \
+                -f message="$dismiss_msg" \
+                -f event="DISMISS" >/dev/null 2>&1; then
+                echo "Dismissed superseded changes-requested review '${rid}'."
+              else
+                echo "::warning::Could not dismiss superseded review '${rid}'."
+              fi
+            done
+          else
+            echo "::warning::Could not list reviews to dismiss superseded changes-requested reviews."
+          fi
+        fi
+
         echo "Self-cleaning complete."
 
     - name: Generate human review brief
