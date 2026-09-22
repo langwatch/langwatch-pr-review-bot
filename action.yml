@@ -152,22 +152,32 @@ runs:
         # finding ids so the review step treats them as accepted instead of re-raising.
         # A dismissed review shows REST state "DISMISSED"; the dismisser comes from the
         # timeline ReviewDismissedEvent actor. Only a non-self actor counts (self = US-3).
+        #
+        # Fire ONCE per dismissal: US-5 applies only when the DISMISSED review is the
+        # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED, ignoring
+        # COMMENTED). Once the bot answers the dismissal with a new (approving) review,
+        # that review becomes the latest verdict, so findings raised on later pushes block
+        # normally and a stale dismissal can never auto-accept future findings.
         dismissed_by_human=false
         dismiss_actor=""
         if gh api "/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
           jq -s 'add // []' all-reviews-raw.json > all-reviews.json
-          dismissed_bot_ids="$(jq -r --arg self "$self_norm" '[.[] | select(.state == "DISMISSED" and ((((.user.login // "") | sub("\\[bot\\]$";"")) == $self)) and ((.body // "") | startswith("**@LangWatchReviewBot**"))) | .id] | .[]' all-reviews.json)"
-          if [[ -n "$dismissed_bot_ids" ]]; then
+          latest_verdict="$(jq -c --arg self "$self_norm" '[.[]
+            | select(((((.user.login // "") | sub("\\[bot\\]$";"")) == $self))
+                     and ((.body // "") | startswith("**@LangWatchReviewBot**"))
+                     and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED")))]
+            | sort_by(.submitted_at) | last // {}' all-reviews.json)"
+          latest_state="$(jq -r '.state // ""' <<< "$latest_verdict")"
+          latest_id="$(jq -r '.id // empty' <<< "$latest_verdict")"
+          if [[ "$latest_state" == "DISMISSED" && -n "$latest_id" ]]; then
             gh api graphql \
               -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:100){nodes{... on ReviewDismissedEvent{actor{login} review{databaseId}}}}}}}' \
               -f owner="$REPOSITORY_OWNER" -f name="$REPOSITORY_NAME" -F number="$PR_NUMBER" > dismiss-events.json 2>/dev/null || echo '{}' > dismiss-events.json
-            for rid in $dismissed_bot_ids; do
-              actor="$(jq -r --argjson rid "$rid" '[.data.repository.pullRequest.timelineItems.nodes[] | select(.review.databaseId == $rid) | .actor.login] | last // ""' dismiss-events.json)"
-              if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" ]]; then
-                dismissed_by_human=true
-                dismiss_actor="$actor"
-              fi
-            done
+            actor="$(jq -r --argjson rid "$latest_id" '[(.data.repository.pullRequest.timelineItems.nodes // [])[] | select(.review.databaseId == $rid) | .actor.login] | last // ""' dismiss-events.json)"
+            if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" ]]; then
+              dismissed_by_human=true
+              dismiss_actor="$actor"
+            fi
           fi
         fi
         dismissed_ids_json='[]'

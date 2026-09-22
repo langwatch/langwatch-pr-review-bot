@@ -176,6 +176,12 @@ Feature: Automated PR review
     Then the review requests changes for the new finding
     And the dismissed findings are still reported as accepted
 
+  Scenario: A dismissal is honored once and does not auto-accept later findings
+    Given a human dismissed the bot's changes-requested review and the bot then approved
+    When a later push introduces a new blocking problem
+    Then the new finding blocks the review
+    And it is not auto-accepted on the basis of the earlier dismissal
+
   Scenario: A review the bot dismissed itself is not treated as accepted
     Given the bot dismissed its own earlier changes-requested review as superseded
     When the bot reviews the next push
