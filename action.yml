@@ -248,16 +248,15 @@ runs:
         # marking them generated in its own .gitattributes. Only the literal value
         # `true` elides; `set`, `unspecified`, and any other value are kept.
         #
-        # `git check-attr --source` (git >= 2.40) is what reads attributes from the
-        # base tree; fail loudly rather than silently reviewing head-marked files if
-        # the runner's git is too old.
-        git_ver="$(git version | awk '{print $3}')"
-        git_major="${git_ver%%.*}"
-        git_rest="${git_ver#*.}"
-        git_minor="${git_rest%%.*}"
-        if [[ "$git_major" -lt 2 || ( "$git_major" -eq 2 && "$git_minor" -lt 40 ) ]]; then
-          echo "::error::git ${git_ver} is too old: resolving linguist-generated on the base ref needs 'git check-attr --source' (git >= 2.40). Upgrade the runner's git."
-          exit 1
+        # Reading attributes from the base tree needs `git check-attr --source`
+        # (git >= 2.40). Probe for the flag by capability rather than parsing a version
+        # string. When it is missing (older git, e.g. some container runners) warn and
+        # review the FULL diff with nothing elided, rather than failing the whole
+        # review or silently trusting head-marked files.
+        check_attr_source_ok="true"
+        if ! git check-attr --source=HEAD -z --stdin linguist-generated </dev/null >/dev/null 2>&1; then
+          check_attr_source_ok="false"
+          echo "::warning::git $(git version | awk '{print $3}') lacks 'git check-attr --source' (needs git >= 2.40); reviewing the full diff without eliding linguist-generated files."
         fi
 
         # Decide which changed paths are generated BEFORE materialising the diff, so the
@@ -269,7 +268,7 @@ runs:
         done < <(git diff --no-ext-diff --name-only -z "${PR_BASE_SHA}...${PR_HEAD_SHA}")
 
         generated_paths=()
-        if [[ "${#changed_paths[@]}" -gt 0 ]]; then
+        if [[ "$check_attr_source_ok" == "true" && "${#changed_paths[@]}" -gt 0 ]]; then
           while IFS= read -r -d '' _gp && IFS= read -r -d '' _attr && IFS= read -r -d '' _val; do
             if [[ "$_val" == "true" ]]; then
               generated_paths+=("$_gp")

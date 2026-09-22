@@ -218,6 +218,14 @@ Feature: Automated PR review
     When the review is posted
     Then the review body states only the count of elided files with no file list
 
+  Scenario: A runner whose git lacks check-attr --source reviews the full diff
+    Given a runner whose git does not support "git check-attr --source" (git older than 2.40)
+    When the PR reviewer runs
+    Then the run logs a warning that generated files are not elided
+    And the full diff is reviewed with no files elided
+    And the generated-elided output is zero
+    And the run does not fail because of the git version
+
   Scenario: A pull request with no generated files leaves the diff untouched
     Given a pull request whose changed files are not marked "linguist-generated=true" on the base branch
     When the PR reviewer runs
