@@ -159,10 +159,10 @@ runs:
           dismissed_bot_ids="$(jq -r --arg self "$self_norm" '[.[] | select(.state == "DISMISSED" and ((((.user.login // "") | sub("\\[bot\\]$";"")) == $self)) and ((.body // "") | startswith("**@LangWatchReviewBot**"))) | .id] | .[]' all-reviews.json)"
           if [[ -n "$dismissed_bot_ids" ]]; then
             gh api graphql \
-              -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:100){nodes{... on ReviewDismissedEvent{actor{login} pullRequestReview{databaseId}}}}}}}' \
+              -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:100){nodes{... on ReviewDismissedEvent{actor{login} review{databaseId}}}}}}}' \
               -f owner="$REPOSITORY_OWNER" -f name="$REPOSITORY_NAME" -F number="$PR_NUMBER" > dismiss-events.json 2>/dev/null || echo '{}' > dismiss-events.json
             for rid in $dismissed_bot_ids; do
-              actor="$(jq -r --argjson rid "$rid" '[.data.repository.pullRequest.timelineItems.nodes[] | select(.pullRequestReview.databaseId == $rid) | .actor.login] | last // ""' dismiss-events.json)"
+              actor="$(jq -r --argjson rid "$rid" '[.data.repository.pullRequest.timelineItems.nodes[] | select(.review.databaseId == $rid) | .actor.login] | last // ""' dismiss-events.json)"
               if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" ]]; then
                 dismissed_by_human=true
                 dismiss_actor="$actor"
