@@ -13,3 +13,7 @@ fi
 # Quoted, argument-required, and directory-validated: an empty or glob-bearing
 # value cannot expand into a destructive recursive delete.
 find "$scratch_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+# Second deliberate defect for the US-4 proof (do not merge): world-writable perms
+# on a caller-controlled path expose the scratch tree to any local user.
+chmod -R 777 "$scratch_dir"

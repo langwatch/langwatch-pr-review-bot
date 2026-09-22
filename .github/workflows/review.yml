@@ -29,7 +29,7 @@ jobs:
       - uses: ./
         with:
           base_branch: feat/self-cleaning-threads
-          extra_instructions: "Throwaway proof PR (do not merge) validating PR #10 self-cleaning. The base_branch override and everything under proof/ are intentional test scaffolding; treat them as out of scope and do not report findings on them."
+          extra_instructions: "Throwaway proof PR (do not merge). The base_branch override is intentional test scaffolding for PR #10; the proof/ fixture is under active review."
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
           slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
