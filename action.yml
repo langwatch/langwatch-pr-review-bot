@@ -878,7 +878,7 @@ runs:
           if ! gh api graphql \
             -f query='mutation($tid:ID!){resolveReviewThread(input:{threadId:$tid}){thread{isResolved}}}' \
             -f tid="$ctid" 2>resolve-err.txt >/dev/null; then
-            echo "::warning::Could not resolve thread for finding '${cid}'; no reply posted. resolveReviewThread needs a github_token with repo write access — the default GITHUB_TOKEN is rejected with 'Resource not accessible by integration'. Detail: $(tr '\n' ' ' < resolve-err.txt)"
+            echo "::warning::Could not resolve thread for finding '${cid}'; no reply posted. resolveReviewThread needs the workflow to grant 'contents: write' alongside 'pull-requests: write' (verified on proof PR #11 — the default GITHUB_TOKEN resolves threads once contents: write is present). Detail: $(tr '\n' ' ' < resolve-err.txt)"
             return
           fi
           if ! gh api graphql \
