@@ -700,15 +700,18 @@ runs:
 
           # US-2: resolve the review threads of findings this run reports fixed.
           # Fixed = ids in the top-level resolved[] PLUS prior ids that vanished
-          # from BOTH this run's findings[] and its resolved[] — a dropped id is a
-          # product decision that a vanished finding is a fixed finding.
+          # from this run's findings[], resolved[] AND accepted[] — a dropped id is a
+          # product decision that a vanished finding is a fixed finding. Accepted ids
+          # (US-4) are excluded here so a deferred finding is not also called fixed.
           cur_ids_json="$(jq -c '[.[].id]' findings.json)"
           resolved_ids_json="$(jq -c '(.resolved // [])' review-object.json)"
+          accepted_ids_json="$(jq -c '[.[].id]' accepted.json)"
           fixed_ids_json="$(jq -cn \
             --argjson prev "$prev_ids_json" \
             --argjson cur "$cur_ids_json" \
             --argjson res "$resolved_ids_json" \
-            '($res + ($prev - $cur - $res)) | unique')"
+            --argjson acc "$accepted_ids_json" \
+            '($res + ($prev - $cur - $res - $acc)) | unique')"
 
           # Fetch every review thread's ROOT comment (author + body + resolved
           # state), paginating, so a fixed id can be matched to its thread by the
