@@ -154,6 +154,33 @@ Feature: Automated PR review
     Then that reply is dropped before the reviewer sees it
     And the finding is not accepted on the basis of that reply
 
+  Scenario: A human-dismissed bot review marks its findings accepted
+    Given the bot's previous changes-requested review was dismissed by a human
+    And that review's findings are still unresolved
+    When the bot reviews the next push
+    Then each of those findings is reported as accepted, not open and not new
+    And each such thread is resolved with an "Accepted: dismissed by <actor>" reply
+    And the review body counts them under "accepted" in the delta line
+
+  Scenario: A dismissed review with no new findings yields an approving review
+    Given the bot's previous changes-requested review was dismissed by a human
+    And the fresh review finds no new blocking problems
+    When the bot reviews the next push
+    Then the review is an approval
+    And the review job exits zero
+
+  Scenario: New findings after a dismissal still block
+    Given the bot's previous changes-requested review was dismissed by a human
+    And the fresh review finds a new blocking problem on new code
+    When the bot reviews the next push
+    Then the review requests changes for the new finding
+    And the dismissed findings are still reported as accepted
+
+  Scenario: A review the bot dismissed itself is not treated as accepted
+    Given the bot dismissed its own earlier changes-requested review as superseded
+    When the bot reviews the next push
+    Then its findings are not marked accepted on the basis of that dismissal
+
   Scenario: Cleanup failure does not fail the review job
     Given a thread resolution or review dismissal call fails
     When self-cleaning runs

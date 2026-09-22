@@ -19,6 +19,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - When a finding the bot raised is fixed, the bot resolves that finding's own review thread so the PR shows only open work; a finding with no thread of its own is left alone, and nothing is ever deleted.
 - When a later review approves the PR, the bot's own earlier "changes requested" reviews are superseded so the merge status reflects the current verdict; a human's or another bot's review is never touched.
 - A finding the bot raised is closed as accepted, rather than raised again, when a human with write access replies to its thread refuting it or deferring it to a linked issue; a bare acknowledgement or a reply from someone without write access does not close it.
+- When a human dismisses the bot's "changes requested" review, its still-unresolved findings are treated as accepted (counted under "accepted", their threads resolved) so a dismissal with no new problems turns the check green; a review the bot dismissed itself does not, and new findings on new code still block.
 - The bot installs as a composite GitHub Action; a target repo adds a thin caller workflow (checkout + `uses:`) and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
 - An optional label gate (`review_label`) restricts the review to PRs carrying that label when set; empty means always on.
 - Fork PRs are skipped, because secrets are unavailable there.
