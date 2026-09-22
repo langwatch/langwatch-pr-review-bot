@@ -15,7 +15,11 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - PR title, description, and diff are treated as untrusted evidence and prompt-injection attempts do not become reviewer instructions.
 - Claude Code runs headlessly through `claude -p` with the dedicated `pr-reviewer` agent and schema-validated review output.
 - Reviewer is read-only and cannot edit the repository.
-- PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments. Threads from bots (CodeRabbit, Dependabot, this bot, etc.) never block the review; only comments from human users do.
+- PRs targeting the configured base branch (default `main`, via `base_branch`) are reviewed only when there are no unresolved **human** review comments. Threads from bots (CodeRabbit, Dependabot, this bot, etc.) never block the review; only comments a human OPENED do — a human reply inside one of the bot's own finding threads does not block.
+- When a finding the bot raised is fixed, the bot resolves that finding's own review thread so the PR shows only open work; a finding with no thread of its own is left alone, and nothing is ever deleted.
+- When a later review approves the PR, the bot's own earlier "changes requested" reviews are superseded so the merge status reflects the current verdict; a human's or another bot's review is never touched.
+- A finding the bot raised is closed as accepted, rather than raised again, when a human with write access replies to its thread refuting it or deferring it to a linked issue; a bare acknowledgement or a reply from someone without write access does not close it.
+- When a human dismisses the bot's "changes requested" review, its still-unresolved findings are treated as accepted (counted under "accepted", their threads resolved) so a dismissal with no new problems turns the check green; a review the bot dismissed itself does not, and new findings on new code still block.
 - The bot installs as a composite GitHub Action; a target repo adds a thin caller workflow (checkout + `uses:`) and customizes through inputs, with no `REVIEW_RULES.md` or `.claude/` files of its own.
 - An optional label gate (`review_label`) restricts the review to PRs carrying that label when set; empty means always on.
 - Fork PRs are skipped, because secrets are unavailable there.
@@ -44,7 +48,9 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 permissions:
-  contents: read
+  # contents: write lets the default GITHUB_TOKEN resolve fixed findings' threads
+  # (resolveReviewThread). Drop it to contents: read if you do not want thread resolution.
+  contents: write
   pull-requests: write
 jobs:
   review:
@@ -99,7 +105,8 @@ context checks
         |
         +--> skip unless base branch matches base_branch (default main)
         |
-        +--> block if HUMAN review threads are unresolved
+        +--> block only when a HUMAN opened an unresolved thread
+        |     (replies on the bot's own findings never block)
         |
         v
 action's own repo (trusted rules/agent/skills)
@@ -166,6 +173,16 @@ Findings are delta-aware: each carries a stable `id` and a `status` of `new` or 
 Claude Code stores each session transcript under `~/.claude/projects`. The workflow caches that directory with `actions/cache`, keyed by PR (`claude-session-<repo_id>-pr-<N>-<run_id>`, with a `-pr-<N>-` restore prefix). The review step also writes the run's `session_id` to a small file inside the cached directory. On the next run for the same PR, if that id and its transcript are present, the review resumes with `claude -p --resume "$SESSION_ID"`; otherwise it starts fresh. The save step runs `if: always()`, so the conversation persists even when blocking findings fail the job.
 
 Resuming gives the reviewer a memory of its earlier findings. The next review re-checks each previous finding against the current diff — resolved, still open, or superseded — instead of re-deriving from scratch and silently reversing itself.
+
+### Self-cleaning threads and reviews
+
+After the review is posted and the run's findings are recorded, a separate best-effort step cleans up the action's own past output so the PR shows only open work. It never deletes anything, and every operation is best-effort: a failure is a workflow warning naming the item and never fails the job. Thread reconciliation runs only when a previous review exists (the first review has nothing to reconcile); review dismissal runs on every approving review, including the first.
+
+- **Resolved-finding threads.** For each finding the new review reports fixed — an id in the top-level `resolved` array, or a prior id that has vanished from `findings`, `resolved`, and the accepted ids (gone means fixed) — the action finds the review thread whose root comment carries that finding's `<!-- id:<id> -->` marker. A thread is the bot's own only when its root author is the login the bot posts as (resolved once via GraphQL `viewer { login }` — which returns `github-actions` under the default token — and falling back to `github-actions[bot]` only if that query fails) **and** the root body carries the marker — never login alone, never marker alone — so a human quoting a finding is not mistaken for the bot's own thread, and a user or GitHub-App `github_token` is recognised the same as the default one. It **resolves the thread first**, and only when the resolve succeeds posts one reply `` **@LangWatchReviewBot** Fixed as of `<sha7>`. `` — so a token that cannot resolve never leaves a dangling "done" reply on a still-open thread. A fixed finding with no inline thread is reported as a warning instead. Already-resolved threads are left untouched, so re-running on an unchanged diff posts no duplicate reply. Threads not rooted in this bot's own comment are never touched.
+- **Stale changes-requested reviews.** When the new review approves the PR, the action dismisses each earlier review still in `CHANGES_REQUESTED` that is the bot's own — its author is the login the bot posts as **and** its body begins with the `**@LangWatchReviewBot**` signature (both required, so neither a human review under a shared login nor a human quoting the signature is dismissed) — with the message `` Superseded by `<sha7>` review. ``, so the merge status reflects the current verdict. It never dismisses the review just posted, a human review, or another bot's review, and it dismisses nothing while the new review still requests changes.
+- **Findings explained away or deferred in a reply.** Before each review the action collects the replies on its own unresolved finding threads and passes them to the reviewer inside the untrusted evidence fence. Only replies from an `OWNER`, `MEMBER`, or `COLLABORATOR` are shown to the reviewer; a reply from an outside account cannot accept a finding and is dropped (the count is logged). When a shown reply substantively refutes a finding, or defers it to a concrete follow-on (an issue/PR number, a GitHub issue URL, or wording like "tracked in"/"deferred to"), the reviewer marks the finding **accepted** instead of re-raising it: the delta line then reads `Since <sha7>: X resolved · A accepted · Y new · Z still open`, the thread is resolved (again, resolve first) with a `` **@LangWatchReviewBot** Accepted: <reason> `` reply, and a deferred blocking finding is also listed under `Deferred with a linked issue:` so the deferral is visible. A bare acknowledgement ("acknowledged", "will fix") does not accept, and a bot-authored reply never counts.
+
+The bot acts through the workflow's `github_token`. Posting thread replies and the [dismiss-a-review](https://docs.github.com/en/rest/pulls/reviews#dismiss-a-review-for-a-pull-request) REST call work under `pull-requests: write`. Resolving a thread with [`resolveReviewThread`](https://docs.github.com/en/graphql/reference/mutations#resolvereviewthread) needs one more grant: add `contents: write` to the workflow's `permissions:` alongside `pull-requests: write`. With both, the default `GITHUB_TOKEN` (`github-actions[bot]`) resolves threads — no PAT or GitHub-App token is required (verified on proof PR #11: with only `contents: read` the mutation returns `Resource not accessible by integration`; adding `contents: write` resolves the thread). Because the action resolves before replying, a token that still cannot resolve posts no reply at all and emits a warning naming the finding and this requirement, rather than leaving a "done" reply on a thread that stays open. Either way the resolve failure is only a `::warning::` and never fails the job.
 
 ### Priorities and blocking
 

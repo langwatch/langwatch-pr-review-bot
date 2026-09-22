@@ -48,8 +48,14 @@ Feature: Automated PR review
     When the pipeline runs
     Then the PR reviewer runs
 
-  Scenario: A human reply in a reviewer-opened thread blocks the next review
-    Given an unresolved review thread opened by the automated reviewer where a human has replied
+  Scenario: A human reply on the bot's own finding thread does not block the next review
+    Given an unresolved review thread whose first comment is this bot's finding
+    And a human has replied in that thread
+    When the pipeline runs
+    Then the PR reviewer runs
+
+  Scenario: A human-opened unresolved thread still blocks the next review
+    Given an unresolved review thread whose first comment is human-authored
     When the pipeline runs
     Then the PR reviewer does not run
 
@@ -64,6 +70,134 @@ Feature: Automated PR review
     Then the follow-up review lists the resolved findings' ids in the top-level "resolved" array
     And re-emits each still-unresolved finding with its previous id and status "open"
     And no finding's summary or fix text narrates history
+
+  Scenario: Fixed findings resolve their review threads
+    Given a previous review opened inline threads for findings
+    And the new review reports some of those findings fixed
+    When the review has been posted and the previous findings recorded
+    Then each fixed finding's thread is resolved first
+    And only after the resolve succeeds is a reply "Fixed as of <sha7>" posted to it
+
+  Scenario: A failed thread resolution posts no reply
+    Given a fixed finding whose thread cannot be resolved by the current github_token
+    When self-cleaning runs
+    Then no reply is posted to that thread
+    And a warning names the finding id and the token requirement
+
+  Scenario: A finding with no inline thread is not resolved
+    Given a fixed finding that was only reported in the review body, with no inline thread
+    When self-cleaning runs
+    Then a warning names the finding id
+    And no thread is resolved for it
+
+  Scenario: A dropped finding id is treated as resolved
+    Given a previous finding id that is absent from both the new "findings" and "resolved" arrays
+    When self-cleaning runs
+    Then its thread is treated as fixed and resolved
+
+  Scenario: Re-running on an unchanged diff posts no duplicate resolution reply
+    Given a finding whose thread was already resolved on a previous run
+    When self-cleaning runs again on an unchanged diff
+    Then no reply is posted to that thread
+    And the thread is not mutated again
+
+  Scenario: A human thread quoting a finding marker is never resolved by the bot
+    Given an unresolved thread a human opened whose body quotes a finding's "<!-- id: -->" marker
+    When self-cleaning runs
+    Then the bot neither resolves nor replies to that thread
+
+  Scenario: A human review starting with the bot signature is never dismissed
+    Given a human-authored changes-requested review whose body begins with the bot signature
+    When the new review approves the pull request
+    Then that human review is not dismissed
+
+  Scenario: A clean re-review dismisses the bot's prior changes-requested reviews
+    Given the bot posted an earlier "changes requested" review on this pull request
+    When the new review approves the pull request
+    Then each earlier changes-requested review by the bot is dismissed as superseded
+    And the review just posted is not dismissed
+    And no human or other-bot review is dismissed
+
+  Scenario: A still-blocking re-review keeps the bot's prior changes-requested review
+    Given the bot posted an earlier "changes requested" review on this pull request
+    When the new review still requests changes
+    Then no review is dismissed
+
+  Scenario: A human explanation on a bot thread closes the finding as accepted
+    Given an unresolved bot-opened thread with a human reply that explains why the finding does not apply
+    When the bot reviews the next push
+    Then the finding is reported as accepted, not open and not new
+    And the thread is resolved with a one-line "Accepted" reply
+    And the review body counts it under "accepted" in the delta line
+
+  Scenario: A follow-on issue reference on a bot thread closes the finding as accepted
+    Given an unresolved bot-opened thread on a blocking finding with a human reply that references a follow-on issue
+    When the bot reviews the next push
+    Then the finding is reported as accepted
+    And the thread is resolved with a one-line "Accepted" reply
+    And the review body lists the finding under "Deferred with a linked issue:"
+
+  Scenario: A bare acknowledgement on a bot thread keeps the finding open
+    Given an unresolved bot-opened thread with a human reply that only acknowledges the finding without explanation or reference
+    When the bot reviews the next push
+    Then the finding stays open
+    And the thread stays unresolved
+
+  Scenario: A bot-authored reply never counts as acceptance
+    Given an unresolved bot-opened thread whose only replies are authored by a bot
+    When the bot reviews the next push
+    Then the finding is not accepted on the basis of that reply
+
+  Scenario: A non-member reply cannot accept a finding
+    Given an unresolved bot-opened thread whose only reply is from an author who is not an owner, member, or collaborator
+    When the bot reviews the next push
+    Then that reply is dropped before the reviewer sees it
+    And the finding is not accepted on the basis of that reply
+
+  Scenario: A human-dismissed bot review marks its findings accepted
+    Given the bot's previous changes-requested review was dismissed by a human
+    And that review's findings are still unresolved
+    When the bot reviews the next push
+    Then each of those findings is reported as accepted, not open and not new
+    And each such thread is resolved with an "Accepted: dismissed by <actor>" reply
+    And the review body counts them under "accepted" in the delta line
+
+  Scenario: A dismissed review with no new findings yields an approving review
+    Given the bot's previous changes-requested review was dismissed by a human
+    And the fresh review finds no new blocking problems
+    When the bot reviews the next push
+    Then the review is an approval
+    And the review job exits zero
+
+  Scenario: New findings after a dismissal still block
+    Given the bot's previous changes-requested review was dismissed by a human
+    And the fresh review finds a new blocking problem on new code
+    When the bot reviews the next push
+    Then the review requests changes for the new finding
+    And the dismissed findings are still reported as accepted
+
+  Scenario: A dismissal is honored once and does not auto-accept later findings
+    Given a human dismissed the bot's changes-requested review and the bot then approved
+    When a later push introduces a new blocking problem
+    Then the new finding blocks the review
+    And it is not auto-accepted on the basis of the earlier dismissal
+
+  Scenario: Dismissing the bot's approving review does not accept its findings
+    Given the bot's most recent review is an approval that a human then dismissed
+    When the bot reviews the next push
+    Then its findings are not marked accepted on the basis of that dismissal
+    And any still-open finding stays open
+
+  Scenario: A review the bot dismissed itself is not treated as accepted
+    Given the bot dismissed its own earlier changes-requested review as superseded
+    When the bot reviews the next push
+    Then its findings are not marked accepted on the basis of that dismissal
+
+  Scenario: Cleanup failure does not fail the review job
+    Given a thread resolution or review dismissal call fails
+    When self-cleaning runs
+    Then the failure is reported as a warning naming the item id
+    And the review job exit code is unchanged
 
   Scenario: A fork pull request is skipped
     Given a pull request opened from a fork
