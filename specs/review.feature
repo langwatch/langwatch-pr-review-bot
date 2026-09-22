@@ -107,6 +107,31 @@ Feature: Automated PR review
     When the new review still requests changes
     Then no review is dismissed
 
+  Scenario: A human explanation on a bot thread closes the finding as accepted
+    Given an unresolved bot-opened thread with a human reply that explains why the finding does not apply
+    When the bot reviews the next push
+    Then the finding is reported as accepted, not open and not new
+    And the thread is resolved with a one-line "Accepted" reply
+    And the review body counts it under "accepted" in the delta line
+
+  Scenario: A follow-on issue reference on a bot thread closes the finding as accepted
+    Given an unresolved bot-opened thread on a blocking finding with a human reply that references a follow-on issue
+    When the bot reviews the next push
+    Then the finding is reported as accepted
+    And the thread is resolved with a one-line "Accepted" reply
+    And the review body lists the finding under "Deferred with a linked issue:"
+
+  Scenario: A bare acknowledgement on a bot thread keeps the finding open
+    Given an unresolved bot-opened thread with a human reply that only acknowledges the finding without explanation or reference
+    When the bot reviews the next push
+    Then the finding stays open
+    And the thread stays unresolved
+
+  Scenario: A bot-authored reply never counts as acceptance
+    Given an unresolved bot-opened thread whose only replies are authored by a bot
+    When the bot reviews the next push
+    Then the finding is not accepted on the basis of that reply
+
   Scenario: Cleanup failure does not fail the review job
     Given a thread resolution or review dismissal call fails
     When self-cleaning runs
