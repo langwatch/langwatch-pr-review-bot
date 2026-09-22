@@ -459,11 +459,19 @@ runs:
             end' "$reviewer_threads_file")"
 
         # US-5: when the bot's prior review was dismissed by a human, tell the reviewer
-        # which finding ids are already accepted so it does NOT re-emit them. The ids are
-        # our own slugs (not PR-controlled), rendered inside the untrusted fence as data.
+        # which finding ids are already accepted so it does NOT re-emit them. The set is
+        # the still-open thread markers (DISMISSED_IDS) UNIONED with every prior finding
+        # id in last-review.json, so an outside-the-diff finding — which has no inline
+        # thread and therefore no marker to collect — is covered too. Ids are our own
+        # slugs (not PR-controlled), rendered inside the untrusted fence as data.
+        dismissed_ids_eff='[]'
         dismissed_block=""
         if [[ "${DISMISSED_BY_HUMAN:-false}" == "true" ]]; then
-          dismissed_block="$(jq -rn --argjson d "${DISMISSED_IDS:-[]}" 'if ($d | length) == 0 then "" else "<dismissed-findings>\n" + ([$d[] | "<finding id=\"" + . + "\"/>"] | join("\n")) + "\n</dismissed-findings>" end')"
+          us5_last_review="$HOME/.claude/projects/pr-review-bot-last-review.json"
+          us5_prev_ids='[]'
+          [[ -f "$us5_last_review" ]] && us5_prev_ids="$(jq -c '([.findings[].id] // [])' "$us5_last_review" 2>/dev/null || echo '[]')"
+          dismissed_ids_eff="$(jq -cn --argjson a "${DISMISSED_IDS:-[]}" --argjson b "$us5_prev_ids" '$a + $b | unique')"
+          dismissed_block="$(jq -rn --argjson d "$dismissed_ids_eff" 'if ($d | length) == 0 then "" else "<dismissed-findings>\n" + ([$d[] | "<finding id=\"" + . + "\"/>"] | join("\n")) + "\n</dismissed-findings>" end')"
         fi
 
         # The title, description, and (bounded) diff are written to a file in the
@@ -623,10 +631,10 @@ runs:
         # inline comment — even if the reviewer re-emitted one despite <dismissed-findings>.
         if [[ "${DISMISSED_BY_HUMAN:-false}" == "true" ]]; then
           us5_reason="dismissed by ${DISMISS_ACTOR:-a maintainer}"
-          jq --argjson dis "${DISMISSED_IDS:-[]}" --arg reason "$us5_reason" \
+          jq --argjson dis "$dismissed_ids_eff" --arg reason "$us5_reason" \
             '(map(.id)) as $have | . + [$dis[] | select(($have | index(.)) | not) | {id: ., reason: $reason}]' \
             accepted.json > accepted-us5.json && mv accepted-us5.json accepted.json
-          jq --argjson dis "${DISMISSED_IDS:-[]}" '[.[] | select((.id) as $id | ($dis | index($id)) | not)]' \
+          jq --argjson dis "$dismissed_ids_eff" '[.[] | select((.id) as $id | ($dis | index($id)) | not)]' \
             findings.json > findings-us5.json && mv findings-us5.json findings.json
         fi
         accepted_count="$(jq 'length' accepted.json)"
