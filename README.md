@@ -167,6 +167,12 @@ Claude Code stores each session transcript under `~/.claude/projects`. The workf
 
 Resuming gives the reviewer a memory of its earlier findings. The next review re-checks each previous finding against the current diff — resolved, still open, or superseded — instead of re-deriving from scratch and silently reversing itself.
 
+### Self-cleaning threads and reviews
+
+After the review is posted and the run's findings are recorded, the action cleans up its own past output so the PR shows only open work. This runs only when a previous review exists (the first review on a PR skips it), never deletes anything, and every step is best-effort: a failure is a workflow warning naming the item and never fails the job.
+
+- **Resolved-finding threads.** For each finding the new review reports fixed — an id in the top-level `resolved` array, or a prior id that has vanished from both `findings` and `resolved` (gone means fixed) — the action finds the review thread whose root comment carries that finding's `<!-- id:<id> -->` marker, posts one reply `` **@LangWatchReviewBot** Fixed as of `<sha7>`. ``, and resolves the thread. A fixed finding that was only in the review body (no inline thread) is reported as a warning instead. Already-resolved threads are left untouched, so re-running on an unchanged diff posts no duplicate reply. Threads not rooted in this bot's own comment are never touched.
+
 ### Priorities and blocking
 
 Every finding carries a `priority` and a `blocking` flag, defined in [`REVIEW_RULES.md`](REVIEW_RULES.md#priorities). P0 (correctness/security/data-loss/AC-not-met) and P1 (must-fix, no runtime risk) are blocking; P2 (quality/style/opinion, judged with per-rule methodology) is non-blocking. The review posts `REQUEST_CHANGES` when at least one finding is blocking (new or still-open) and `APPROVE` otherwise. The "Fail when violations were found" step fails the job only on blocking findings.

@@ -71,6 +71,36 @@ Feature: Automated PR review
     And re-emits each still-unresolved finding with its previous id and status "open"
     And no finding's summary or fix text narrates history
 
+  Scenario: Fixed findings resolve their review threads
+    Given a previous review opened inline threads for findings
+    And the new review reports some of those findings fixed
+    When the review has been posted and the previous findings recorded
+    Then each fixed finding's thread gets one reply "Fixed as of <sha7>"
+    And each fixed finding's thread is resolved
+
+  Scenario: A finding with no inline thread is not resolved
+    Given a fixed finding that was only reported in the review body, with no inline thread
+    When self-cleaning runs
+    Then a warning names the finding id
+    And no thread is resolved for it
+
+  Scenario: A dropped finding id is treated as resolved
+    Given a previous finding id that is absent from both the new "findings" and "resolved" arrays
+    When self-cleaning runs
+    Then its thread is treated as fixed and resolved
+
+  Scenario: Re-running on an unchanged diff posts no duplicate resolution reply
+    Given a finding whose thread was already resolved on a previous run
+    When self-cleaning runs again on an unchanged diff
+    Then no reply is posted to that thread
+    And the thread is not mutated again
+
+  Scenario: Cleanup failure does not fail the review job
+    Given a thread resolution or review dismissal call fails
+    When self-cleaning runs
+    Then the failure is reported as a warning naming the item id
+    And the review job exit code is unchanged
+
   Scenario: A fork pull request is skipped
     Given a pull request opened from a fork
     When the pipeline runs

@@ -369,9 +369,13 @@ runs:
         has_prev="false"
         prev_head_sha=""
         prev_findings_block=""
+        # Ids the previous run reported. Captured here, BEFORE last-review.json is
+        # overwritten below, so self-cleaning can tell which prior findings vanished.
+        prev_ids_json="[]"
         if [[ -f "$last_review_file" ]] && jq -e '.findings' "$last_review_file" >/dev/null 2>&1; then
           has_prev="true"
           prev_head_sha="$(jq -r '.head_sha // ""' "$last_review_file")"
+          prev_ids_json="$(jq -c '[.findings[].id]' "$last_review_file")"
           prev_findings_json="$(jq -c '[.findings[] | {id,path,summary}]' "$last_review_file")"
           prev_findings_block=" Your previous findings on this PR are this JSON array of {id,path,summary}: ${prev_findings_json}. For each previous finding still unresolved in the CURRENT diff, emit it again with the SAME id and status \"open\". For any that is now fixed, put its id in the top-level \"resolved\" array and do NOT include it in \"findings\". A brand-new problem gets a fresh short slug id and status \"new\"."
         fi
@@ -622,6 +626,96 @@ runs:
           echo
           echo "$body"
         } >> "$GITHUB_STEP_SUMMARY"
+
+        # ==================================================================
+        # Self-cleaning. Runs AFTER the review is posted and after
+        # last-review.json is written above. Every failure here is a
+        # ::warning:: naming the item and NEVER changes the job exit code
+        # (that is owned by the review_failed output and the final step).
+        # Nothing is ever deleted. Skipped on the first review of a PR:
+        # there is no prior state to reconcile.
+        # ==================================================================
+        if [[ "$has_prev" != "true" ]]; then
+          echo "First review on this PR; skipping self-cleaning (no previous review to reconcile)."
+        else
+          # errexit off for the whole block so one best-effort API failure warns
+          # instead of aborting the step (which would flip the job red).
+          set +e
+
+          # US-2: resolve the review threads of findings this run reports fixed.
+          # Fixed = ids in the top-level resolved[] PLUS prior ids that vanished
+          # from BOTH this run's findings[] and its resolved[] — a dropped id is a
+          # product decision that a vanished finding is a fixed finding.
+          cur_ids_json="$(jq -c '[.[].id]' findings.json)"
+          resolved_ids_json="$(jq -c '(.resolved // [])' review-object.json)"
+          fixed_ids_json="$(jq -cn \
+            --argjson prev "$prev_ids_json" \
+            --argjson cur "$cur_ids_json" \
+            --argjson res "$resolved_ids_json" \
+            '($res + ($prev - $cur - $res)) | unique')"
+
+          # Fetch every review thread's ROOT comment (author + body + resolved
+          # state), paginating, so a fixed id can be matched to its thread by the
+          # "<!-- id:<id> -->" marker the inline comment embedded.
+          echo '[]' > review-threads.json
+          thread_cursor=""
+          threads_ok="true"
+          while :; do
+            if ! gh api graphql \
+              -f query='query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id,isResolved,comments(first:1){nodes{author{login,__typename},body}}}pageInfo{hasNextPage,endCursor}}}}}' \
+              -f owner="${REPOSITORY%%/*}" \
+              -f name="${REPOSITORY##*/}" \
+              -F number="$PR_NUMBER" \
+              -f cursor="$thread_cursor" > thread-page.json 2>/dev/null \
+              || ! jq -e '.data.repository.pullRequest.reviewThreads' thread-page.json >/dev/null 2>&1; then
+              threads_ok="false"; break
+            fi
+            jq -s '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, rootLogin: (.comments.nodes[0].author.login // ""), rootType: (.comments.nodes[0].author.__typename // "User"), rootBody: (.comments.nodes[0].body // "")}]' \
+              review-threads.json thread-page.json > review-threads.tmp && mv review-threads.tmp review-threads.json
+            has_next="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' thread-page.json)"
+            [[ "$has_next" == "true" ]] || break
+            thread_cursor="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor' thread-page.json)"
+          done
+
+          cleanup_sha7="${PR_HEAD_SHA:0:7}"
+          while IFS= read -r fid; do
+            [[ -n "$fid" ]] || continue
+            if [[ "$threads_ok" != "true" ]]; then
+              echo "::warning::Could not fetch review threads; fixed finding '${fid}' was not resolved."
+              continue
+            fi
+            marker="<!-- id:${fid} -->"
+            # Only a thread rooted in THIS bot's finding comment is ever touched.
+            thread_json="$(jq -c --arg m "$marker" '[.[] | select(.rootType == "Bot" and .rootLogin == "github-actions[bot]" and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
+            if [[ -z "$thread_json" ]]; then
+              echo "::warning::Fixed finding '${fid}' has no inline thread rooted in this bot; nothing resolved."
+              continue
+            fi
+            if [[ "$(jq -r '.isResolved' <<< "$thread_json")" == "true" ]]; then
+              # Idempotent: an already-resolved thread gets no reply and no mutation.
+              continue
+            fi
+            thread_id="$(jq -r '.id' <<< "$thread_json")"
+            reply_body="**@LangWatchReviewBot** Fixed as of \`${cleanup_sha7}\`."
+            if ! gh api graphql \
+              -f query='mutation($tid:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$tid,body:$body}){comment{id}}}' \
+              -f tid="$thread_id" \
+              -f body="$reply_body" >/dev/null 2>&1; then
+              echo "::warning::Could not post resolution reply for fixed finding '${fid}'."
+              continue
+            fi
+            if ! gh api graphql \
+              -f query='mutation($tid:ID!){resolveReviewThread(input:{threadId:$tid}){thread{isResolved}}}' \
+              -f tid="$thread_id" >/dev/null 2>&1; then
+              echo "::warning::Could not resolve thread for fixed finding '${fid}' (reply was posted)."
+              continue
+            fi
+            echo "Resolved thread for fixed finding '${fid}'."
+          done < <(jq -r '.[]' <<< "$fixed_ids_json")
+
+          set -e
+        fi
+        echo "Self-cleaning complete."
 
     - name: Generate human review brief
       if: ${{ steps.context.outputs.skip != 'true' }}
