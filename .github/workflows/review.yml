@@ -27,6 +27,7 @@ jobs:
       # installed/consumer repos, which use a pinned `uses:` ref instead of `./`.
       - uses: ./
         with:
+          base_branch: fix/elide-generated-files
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
           slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
