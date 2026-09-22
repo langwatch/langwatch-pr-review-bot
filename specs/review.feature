@@ -325,3 +325,51 @@ Feature: Automated PR review
     When the PR reviewer runs
     Then the whole diff is written into the review bundle with no truncation trailer
     And the review body carries no truncation notice
+
+  Scenario: Generated files are elided from the review diff and reported
+    Given a pull request that changes files marked "linguist-generated=true" in the base branch .gitattributes
+    When the PR reviewer runs
+    Then those files are excluded from the diff before the byte budget is applied
+    And the review bundle names the elided generated files and their count
+    And the prompt tells the reviewer the count of elided files and not to review their contents line-by-line
+    And the prompt does not contain the elided file names
+    And the review body states how many generated files were elided
+    And the total file count still includes the elided generated files
+
+  Scenario: Generated attributes are read from the base branch, not the pull request head
+    Given a pull request that marks one of its own changed files "linguist-generated=true" only in the head .gitattributes
+    And that file is not marked generated on the base branch
+    When the PR reviewer runs
+    Then that file is NOT elided from the review diff
+
+  Scenario: Five or fewer generated files are listed by basename in the body
+    Given a pull request with five or fewer elided generated files
+    When the review is posted
+    Then the review body lists the elided files by basename after the count
+
+  Scenario: More than five generated files collapse to a count in the body
+    Given a pull request with more than five elided generated files
+    When the review is posted
+    Then the review body states only the count of elided files with no file list
+
+  Scenario: A runner whose git lacks check-attr --source reviews the full diff
+    Given a runner whose git does not support "git check-attr --source" (git older than 2.40)
+    When the PR reviewer runs
+    Then the run logs a warning that generated files are not elided
+    And the full diff is reviewed with no files elided
+    And the generated-elided output is zero
+    And the run does not fail because of the git version
+
+  Scenario: A pull request with no generated files leaves the diff untouched
+    Given a pull request whose changed files are not marked "linguist-generated=true" on the base branch
+    When the PR reviewer runs
+    Then the review diff is the same as the unelided diff
+    And the review body carries no generated-files notice
+    And the generated-elided output is zero
+
+  Scenario: Truncation counts reflect the elided diff
+    Given a pull request whose diff exceeds the byte budget only because of generated files
+    When the generated files are elided and the remaining diff is within the byte budget
+    Then the remaining diff is reviewed whole with no truncation trailer
+    And the review body carries no truncation notice
+    And the review body reports the generated files that were elided
