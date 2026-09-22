@@ -171,10 +171,15 @@ runs:
           latest_id="$(jq -r '.id // empty' <<< "$latest_verdict")"
           if [[ "$latest_state" == "DISMISSED" && -n "$latest_id" ]]; then
             gh api graphql \
-              -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:100){nodes{... on ReviewDismissedEvent{actor{login} review{databaseId}}}}}}}' \
+              -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){timelineItems(itemTypes:[REVIEW_DISMISSED_EVENT],last:100){nodes{... on ReviewDismissedEvent{actor{login} previousReviewState review{databaseId}}}}}}}' \
               -f owner="$REPOSITORY_OWNER" -f name="$REPOSITORY_NAME" -F number="$PR_NUMBER" > dismiss-events.json 2>/dev/null || echo '{}' > dismiss-events.json
-            actor="$(jq -r --argjson rid "$latest_id" '[(.data.repository.pullRequest.timelineItems.nodes // [])[] | select(.review.databaseId == $rid) | .actor.login] | last // ""' dismiss-events.json)"
-            if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" ]]; then
+            dismiss_event="$(jq -c --argjson rid "$latest_id" '[(.data.repository.pullRequest.timelineItems.nodes // [])[] | select(.review.databaseId == $rid)] | last // {}' dismiss-events.json)"
+            actor="$(jq -r '.actor.login // ""' <<< "$dismiss_event")"
+            prev_state="$(jq -r '.previousReviewState // ""' <<< "$dismiss_event")"
+            # Only a dismissed CHANGES_REQUESTED review accepts findings; dismissing the
+            # bot's own APPROVE (previousReviewState APPROVED) must not, and a self
+            # dismissal (US-3 supersession) is excluded by the actor check.
+            if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" && "$prev_state" == "CHANGES_REQUESTED" ]]; then
               dismissed_by_human=true
               dismiss_actor="$actor"
             fi
@@ -474,12 +479,15 @@ runs:
         # id in last-review.json, so an outside-the-diff finding — which has no inline
         # thread and therefore no marker to collect — is covered too. Ids are our own
         # slugs (not PR-controlled), rendered inside the untrusted fence as data.
+        # Findings persisted by the previous run for THIS PR (delta memory that survives
+        # even without a resumable session): {head_sha, findings:[...]}. Defined here so
+        # the US-5 block below and the delta bookkeeping further down share one path.
+        last_review_file="$HOME/.claude/projects/pr-review-bot-last-review.json"
         dismissed_ids_eff='[]'
         dismissed_block=""
         if [[ "${DISMISSED_BY_HUMAN:-false}" == "true" ]]; then
-          us5_last_review="$HOME/.claude/projects/pr-review-bot-last-review.json"
           us5_prev_ids='[]'
-          [[ -f "$us5_last_review" ]] && us5_prev_ids="$(jq -c '([.findings[].id] // [])' "$us5_last_review" 2>/dev/null || echo '[]')"
+          [[ -f "$last_review_file" ]] && us5_prev_ids="$(jq -c '([.findings[].id] // [])' "$last_review_file" 2>/dev/null || echo '[]')"
           dismissed_ids_eff="$(jq -cn --argjson a "${DISMISSED_IDS:-[]}" --argjson b "$us5_prev_ids" '$a + $b | unique')"
           dismissed_block="$(jq -rn --argjson d "$dismissed_ids_eff" 'if ($d | length) == 0 then "" else "<dismissed-findings>\n" + ([$d[] | "<finding id=\"" + . + "\"/>"] | join("\n")) + "\n</dismissed-findings>" end')"
         fi
@@ -517,9 +525,7 @@ runs:
         # it re-checks them instead of re-deriving and reversing them.
         session_id_file="$HOME/.claude/projects/pr-review-bot-session-id"
 
-        # Findings persisted by the previous run for THIS PR (delta memory that
-        # survives even without a resumable session). {head_sha, findings:[...]}.
-        last_review_file="$HOME/.claude/projects/pr-review-bot-last-review.json"
+        # last_review_file is defined above (shared with the US-5 block).
         has_prev="false"
         prev_head_sha=""
         prev_findings_block=""
