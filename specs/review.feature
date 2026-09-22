@@ -75,8 +75,14 @@ Feature: Automated PR review
     Given a previous review opened inline threads for findings
     And the new review reports some of those findings fixed
     When the review has been posted and the previous findings recorded
-    Then each fixed finding's thread gets one reply "Fixed as of <sha7>"
-    And each fixed finding's thread is resolved
+    Then each fixed finding's thread is resolved first
+    And only after the resolve succeeds is a reply "Fixed as of <sha7>" posted to it
+
+  Scenario: A failed thread resolution posts no reply
+    Given a fixed finding whose thread cannot be resolved by the current github_token
+    When self-cleaning runs
+    Then no reply is posted to that thread
+    And a warning names the finding id and the token requirement
 
   Scenario: A finding with no inline thread is not resolved
     Given a fixed finding that was only reported in the review body, with no inline thread
@@ -131,6 +137,12 @@ Feature: Automated PR review
     Given an unresolved bot-opened thread whose only replies are authored by a bot
     When the bot reviews the next push
     Then the finding is not accepted on the basis of that reply
+
+  Scenario: A non-member reply cannot accept a finding
+    Given an unresolved bot-opened thread whose only reply is from an author who is not an owner, member, or collaborator
+    When the bot reviews the next push
+    Then that reply is dropped before the reviewer sees it
+    And the finding is not accepted on the basis of that reply
 
   Scenario: Cleanup failure does not fail the review job
     Given a thread resolution or review dismissal call fails
