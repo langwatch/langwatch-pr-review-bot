@@ -182,6 +182,12 @@ Feature: Automated PR review
     Then the new finding blocks the review
     And it is not auto-accepted on the basis of the earlier dismissal
 
+  Scenario: Dismissing the bot's approving review does not accept its findings
+    Given the bot's most recent review is an approval that a human then dismissed
+    When the bot reviews the next push
+    Then its findings are not marked accepted on the basis of that dismissal
+    And any still-open finding stays open
+
   Scenario: A review the bot dismissed itself is not treated as accepted
     Given the bot dismissed its own earlier changes-requested review as superseded
     When the bot reviews the next push
