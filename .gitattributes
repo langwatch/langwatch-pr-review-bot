@@ -1,0 +1,7 @@
+# Files matching these patterns are treated as generated: the PR review bot elides
+# them from the review diff (attributes are resolved on the base branch). This is the
+# proof contract for that behaviour: throwaway proof PRs add generated fixtures under
+# specs/fixtures/ to exercise elision live. That directory holds only such throwaway
+# fixtures and may be absent on this branch; non-.generated.json files there (if any)
+# stay unmarked and are reviewed normally.
+specs/fixtures/*.generated.json linguist-generated=true
