@@ -13,7 +13,3 @@ fi
 # Quoted, argument-required, and directory-validated: an empty or glob-bearing
 # value cannot expand into a destructive recursive delete.
 find "$scratch_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-
-# Fresh deliberate defect for the self-cleaning proof (do not merge): eval on a
-# caller-controlled value is a shell-injection sink.
-eval "rm -rf $scratch_dir/tmp"
