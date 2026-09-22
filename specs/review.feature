@@ -101,6 +101,16 @@ Feature: Automated PR review
     Then no reply is posted to that thread
     And the thread is not mutated again
 
+  Scenario: A human thread quoting a finding marker is never resolved by the bot
+    Given an unresolved thread a human opened whose body quotes a finding's "<!-- id: -->" marker
+    When self-cleaning runs
+    Then the bot neither resolves nor replies to that thread
+
+  Scenario: A human review starting with the bot signature is never dismissed
+    Given a human-authored changes-requested review whose body begins with the bot signature
+    When the new review approves the pull request
+    Then that human review is not dismissed
+
   Scenario: A clean re-review dismisses the bot's prior changes-requested reviews
     Given the bot posted an earlier "changes requested" review on this pull request
     When the new review approves the pull request

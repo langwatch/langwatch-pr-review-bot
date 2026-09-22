@@ -86,14 +86,20 @@ runs:
         # THIS bot's OWN iff its root/review author login equals the login the bot itself
         # posts as (self_login) AND the body carries the finding marker "<!-- id:"
         # (threads) or the "**@LangWatchReviewBot**" prefix (reviews) — never login-only,
-        # never body-only. self_login is read from the login the token authenticates as
-        # (gh api user); the default GITHUB_TOKEN cannot call that endpoint and 403s, so
-        # it falls back to github-actions[bot]. The "[bot]" suffix differs between GraphQL
-        # (github-actions) and REST (github-actions[bot]) logins, so it is stripped on
-        # both sides before comparing.
-        self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
-        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
+        # never body-only. self_login is resolved ONCE here via GraphQL `viewer { login }`
+        # (works for a PAT, a GitHub-App installation token, and the default GITHUB_TOKEN
+        # — which returns "github-actions"). Only if that query itself fails do we fall
+        # back to github-actions[bot] with a warning. The "[bot]" suffix differs between
+        # GraphQL (github-actions) and REST (github-actions[bot]) logins, so it is stripped
+        # on both sides before comparing. self_norm is exported as SELF_LOGIN so the review
+        # and self-cleaning steps reuse it instead of recomputing.
+        self_login="$(gh api graphql -f query='query { viewer { login } }' --jq '.data.viewer.login' 2>/dev/null || true)"
+        if [[ -z "$self_login" ]]; then
+          self_login='github-actions[bot]'
+          echo "::warning::Could not resolve the bot's own login via GraphQL viewer; falling back to ${self_login}."
+        fi
         self_norm="${self_login%\[bot\]}"
+        echo "SELF_LOGIN=${self_norm}" >> "$GITHUB_ENV"
 
         cursor=""
         while :; do
@@ -362,13 +368,6 @@ runs:
         # <threads> block placed INSIDE the untrusted <review-input> fence — reply
         # text is PR-controlled and is data, never instructions. Best-effort: on any
         # failure the reviewer simply sees no <threads> block and reviews as before.
-        # self_login = the login this token posts as, for the shared identity rule (see
-        # the "Gather PR context" step). This runs BEFORE the review is posted, so it
-        # comes from `gh api user` (default GITHUB_TOKEN 403s -> github-actions[bot]).
-        self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
-        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
-        self_norm="${self_login%\[bot\]}"
-
         reviewer_threads_file="${PWD}/reviewer-threads.json"
         echo '[]' > "$reviewer_threads_file"
         u4_cursor=""
@@ -386,7 +385,7 @@ runs:
           # self_login AND the root body carries a <!-- id:X --> marker. A human quoting a
           # finding (a different login) is therefore never picked up. Replies keep their
           # authorAssociation so non-members can be dropped before acceptance.
-          jq -s --arg self "$self_norm" '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]
+          jq -s --arg self "$SELF_LOGIN" '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[]
                  | select(.isResolved == false)
                  | (.comments.nodes[0]) as $root
                  | select(((($root.author.login // "") | sub("\\[bot\\]$";"")) == $self) and ($root.body | test("<!-- id:[^ ]+ -->")))
@@ -762,14 +761,8 @@ runs:
         prev_ids_json="$(jq -c '.prev_ids' cleanup-context.json)"
         cleanup_sha7="${PR_HEAD_SHA:0:7}"
 
-        # self_login for the shared identity rule (see "Gather PR context"). The review
-        # was posted this run, so it comes from review-response.json's .user.login
-        # (falling back to gh api user, then github-actions[bot]) — this is exactly the
-        # login the bot's own threads and reviews are authored under.
-        self_login="$(jq -r '.user.login // empty' review-response.json)"
-        [[ -n "$self_login" ]] || self_login="$(gh api user --jq .login 2>/dev/null || echo 'github-actions[bot]')"
-        [[ -n "$self_login" ]] || self_login='github-actions[bot]'
-        self_norm="${self_login%\[bot\]}"
+        # SELF_LOGIN (the login the bot posts as) is resolved once in "Gather PR context"
+        # and exported via $GITHUB_ENV; the shared identity rule below reuses it.
 
         # Fetch every review thread's ROOT comment ONCE (id, resolved state, author login,
         # body) and share it across both resolution loops. Own finding threads are matched
@@ -805,7 +798,7 @@ runs:
             echo "::warning::Could not fetch review threads; finding '${cid}' was not resolved."
             return
           fi
-          cthread="$(jq -c --arg m "$cmarker" --arg self "$self_norm" '[.[] | select((((.rootLogin // "") | sub("\\[bot\\]$";"")) == $self) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
+          cthread="$(jq -c --arg m "$cmarker" --arg self "$SELF_LOGIN" '[.[] | select((((.rootLogin // "") | sub("\\[bot\\]$";"")) == $self) and (.rootBody | contains($m)))] | first // empty' review-threads.json)"
           if [[ -z "$cthread" ]]; then
             echo "::warning::Finding '${cid}' has no inline thread rooted in this bot; nothing resolved."
             return
@@ -875,7 +868,7 @@ runs:
           if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
             jq -s 'add // []' all-reviews-raw.json > all-reviews.json
             dismiss_msg="Superseded by \`${cleanup_sha7}\` review."
-            stale_ids="$(jq -r --arg posted "$posted_review_id" --arg self "$self_norm" \
+            stale_ids="$(jq -r --arg posted "$posted_review_id" --arg self "$SELF_LOGIN" \
               '[.[] | select(.state == "CHANGES_REQUESTED" and ((((.user.login // "") | sub("\\[bot\\]$";"")) == $self)) and ((.body // "") | startswith("**@LangWatchReviewBot**")) and ((.id | tostring) != $posted))] | .[].id' \
               all-reviews.json)"
             for rid in $stale_ids; do
