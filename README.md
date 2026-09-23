@@ -190,6 +190,21 @@ Every finding carries a `priority` and a `blocking` flag, defined in [`REVIEW_RU
 
 The generated brief is written to `pr-review-brief.md`, added to the GitHub Actions job summary, and uploaded as a workflow artifact.
 
+### Licensing design decisions
+
+The reviewer checks that every design decision in a PR was actually asked for. Before the review, the action reads the PR body for closing keywords (`Closes|Fixes|Resolves #N`, case-insensitive) and full issue URLs, fetches each linked issue's body and comments, and passes its Gherkin scenarios and `## Acceptance Criteria` list to the reviewer as `<linked-issue number="N">` sections inside the untrusted evidence fence. It also collects any `license:` lines from the PR body into a `<licenses>` section.
+
+A **design decision** is a diff choice that introduces a constraint or capability nobody requested: a new limit/cap/threshold, a config knob, an abstraction, a fallback path, a new dependency, a retry/timeout policy, or a schema change. Each one must trace to a linked-issue acceptance criterion/scenario or to a `license:` line. A decision that traces to neither gets a **blocking** finding, `unlicensed-decision-<slug>`, that quotes the decision and states no acceptance criterion covers it. Benign choices — naming, formatting, test structure, a private helper extraction, an early return — are not design decisions and are never flagged.
+
+**Escape hatch.** An author licenses a decision up front by adding a line to the PR body:
+
+- `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
+- `license: owner ratified <url>` — the owner ratified it out of band; link the ratification.
+
+Either line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying `Accepted:` on its thread — the same owner-acceptance mechanism used for every other finding.
+
+When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses. It then posts a single **non-blocking** `no-linked-issue` note saying so, and flags no individual decisions.
+
 ## Configuration
 
 The workflow expects these repository secrets:

@@ -367,3 +367,62 @@ Feature: Automated PR review
     Then the remaining diff is reviewed whole with no truncation trailer
     And the review body carries no truncation notice
     And the review body reports the generated files that were elided
+
+  # --- Licensing design decisions against the linked issue (issue #13) ---
+
+  @ac-1
+  Scenario: Every design decision traces to a linked-issue acceptance criterion
+    Given the pull request is linked to an issue that has acceptance criteria
+    And every design decision in the diff traces to one of those acceptance criteria
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then no unlicensed-decision finding is reported
+
+  @ac-2
+  Scenario: An unlicensed decision has no acceptance criterion and no license line
+    Given the pull request is linked to an issue that has acceptance criteria
+    And the diff introduces a design decision that no acceptance criterion requested
+    And the pull request body has no "license:" line for that decision
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then a blocking finding "unlicensed-decision-<slug>" is reported citing the specific decision
+    And the finding states that no acceptance criterion in the linked issue covers it
+
+  @ac-3
+  Scenario: A decision is licensed by a line in the pull request body
+    Given the pull request introduces a design decision with no matching acceptance criterion
+    And the pull request body contains a "Decision: <X> — license: AC-<n>" or "license: owner ratified <url>" line for that decision
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then the unlicensed-decision finding is suppressed for that decision
+
+  @ac-4
+  Scenario: The pull request has no linked issue
+    Given the pull request has no linked issue
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    And no per-decision finding is fabricated
+
+  @ac-5
+  Scenario: The linked issue has no acceptance criteria
+    Given the pull request is linked to an issue that has no acceptance criteria
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    And no per-decision finding is fabricated
+
+  @ac-6
+  Scenario: A benign untraced choice is not flagged as unlicensed
+    Given the diff contains a routine implementation choice that no acceptance criterion names
+    And that choice is not invented scope
+    When the PR reviewer evaluates the "every design decision is licensed" rule
+    Then no unlicensed-decision finding is reported for that choice
+
+  @ac-7
+  Scenario: Owner acceptance resolves a flagged decision
+    Given the bot has posted an unlicensed-decision finding on a pull request thread
+    When the owner replies "Accepted:" on that thread
+    Then the finding is resolved through the existing owner-acceptance mechanism
+    And the finding is not re-raised on the next review
+
+  @ac-8
+  Scenario: The existing scope rule still catches unrelated unrequested changes
+    Given the diff contains a change unrelated to any design-decision framing that serves no stated requirement
+    When the PR reviewer evaluates the scope rules
+    Then a finding is still reported for that change
