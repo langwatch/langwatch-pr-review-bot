@@ -206,7 +206,7 @@ A **design decision** is a diff choice that introduces a constraint or capabilit
 - `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
 - `license: owner ratified <url>` — the owner ratified it out of band; link the ratification.
 
-Either line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying `Accepted:` on its thread — the same owner-acceptance mechanism used for every other finding.
+Either line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.
 
 When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses. It then posts a single **non-blocking** `no-linked-issue` note saying so, and flags no individual decisions.
 

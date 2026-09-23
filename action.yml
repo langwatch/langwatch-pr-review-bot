@@ -611,13 +611,27 @@ runs:
                 && mv "${skipped_issues_json}.tmp" "$skipped_issues_json"
               continue
             fi
-            ibody="$(gh api "/repos/${iowner}/${irepo}/issues/${inum}" --jq '.body // ""' 2>/dev/null)" || continue
+            if ! ibody="$(gh api "/repos/${iowner}/${irepo}/issues/${inum}" --jq '.body // ""' 2>/dev/null)"; then
+              echo "::warning::Could not fetch linked issue ${iowner}/${irepo}#${inum}; dropping it from review context."
+              continue
+            fi
             # Security: an issue comment is PR-controlled-adjacent input from any public
             # commenter, so a forged "## Acceptance Criteria" / Gherkin section in a
             # comment must not reach extraction unless the commenter is trusted. Reuses
             # the same OWNER/MEMBER/COLLABORATOR allow-list as the finding-acceptance
             # replies above; the issue body itself is kept as-is.
-            icomments="$(gh api "/repos/${iowner}/${irepo}/issues/${inum}/comments" --paginate --jq '[.[] | {body: (.body // ""), association: (.author_association // "NONE")}]' 2>/dev/null)" || icomments='[]'
+            #
+            # --paginate without --jq writes one JSON array per page to the raw file;
+            # `jq -s 'add // []'` slurps and flattens them into a single array before
+            # the per-comment transform runs, matching the all-reviews.json pattern
+            # above (and at line ~1184) so comments past page 1 are not silently
+            # dropped by feeding --jq concatenated top-level arrays it cannot parse.
+            icomments_raw="${PWD}/icomments-raw.json"
+            if gh api "/repos/${iowner}/${irepo}/issues/${inum}/comments" --paginate > "$icomments_raw" 2>/dev/null; then
+              icomments="$(jq -sc 'add // [] | [.[] | {body: (.body // ""), association: (.author_association // "NONE")}]' "$icomments_raw")"
+            else
+              icomments='[]'
+            fi
             [[ -n "$icomments" ]] || icomments='[]'
             icomments="$(jq -c --argjson allowed "$member_assoc_json" '[.[] | select(.association as $a | $allowed | index($a)) | .body]' <<<"$icomments")"
             jq -c --argjson n "$inum" --arg b "$ibody" --argjson c "$icomments" \
@@ -650,8 +664,17 @@ runs:
             data = []
         out = []
         for it in data:
-            blob = "\n\n".join([it.get("body") or ""] + [c or "" for c in (it.get("comments") or [])])
-            gherkin, acs = extract(blob)
+            # Extract per source (body, then each trusted comment) rather than joining
+            # them into one blob first: a joined blob lets an "## Acceptance Criteria"
+            # section with no closing "#" heading of its own capture through into the
+            # next source's text (an appended comment), double-emitting that comment's
+            # Gherkin/AC content as if it belonged to the first source.
+            sources = [it.get("body") or ""] + [c or "" for c in (it.get("comments") or [])]
+            gherkin, acs = [], []
+            for src in sources:
+                g, a = extract(src)
+                gherkin += g
+                acs += a
             parts = ["<gherkin>\n" + esc(g) + "\n</gherkin>" for g in gherkin]
             parts += ["<acceptance-criteria>\n" + esc(a) + "\n</acceptance-criteria>" for a in acs]
             inner = "\n".join(parts) if parts else "<none/>"

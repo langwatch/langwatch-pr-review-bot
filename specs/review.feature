@@ -417,7 +417,7 @@ Feature: Automated PR review
   @ac-7
   Scenario: Owner acceptance resolves a flagged decision
     Given the bot has posted an unlicensed-decision finding on a pull request thread
-    When the owner replies "Accepted:" on that thread
+    When the owner replies on that thread with a reason the finding does not apply, or a concrete follow-on
     Then the finding is resolved through the existing owner-acceptance mechanism
     And the finding is not re-raised on the next review
 
@@ -441,3 +441,33 @@ Feature: Automated PR review
     When the action fetches linked issues
     Then that issue is never fetched with the workflow token
     And the bundle records it as "<linked-issue-skipped number=\"N\" reason=\"cross-repo\"/>"
+
+  @ac-11
+  Scenario: Closing keywords and same-repo issue URLs extract and dedupe to one ref
+    Given the pull request body contains "Closes #13" and a full issue URL pointing at issue 13 in the pull request's own repository
+    When the action extracts issue refs from the pull request body
+    Then exactly one ref for issue 13 is produced
+    And the issue is fetched only once
+
+  @ac-12
+  Scenario: A linked-issue fetch failure falls back to no-linked-issue with a logged warning
+    Given the pull request body references a same-repo issue
+    And the fetch for that issue's body fails
+    When the action fetches linked issues
+    Then a warning is logged naming the issue that could not be fetched
+    And the review bundle carries no "<linked-issue>" section for that issue
+    And the review proceeds with the "no-linked-issue" note instead of failing the run
+
+  @ac-13
+  Scenario: Linked-issue text is XML-escaped inside the review fence
+    Given a linked issue's body or a trusted comment contains "&", "<", or ">" characters
+    When the action renders the "<linked-issue>" section
+    Then those characters are escaped as "&amp;", "&lt;", and "&gt;"
+    And the escaped text cannot forge a tag or break out of the "<review-input>" fence
+
+  @ac-14
+  Scenario: All pages of issue comments are considered, not just the first
+    Given a linked issue has more comments than fit on one API page
+    When the action fetches that issue's comments
+    Then comments from every page are considered for "## Acceptance Criteria" and Gherkin extraction
+    And no comment is silently dropped because it fell on a later page
