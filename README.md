@@ -194,6 +194,11 @@ The generated brief is written to `pr-review-brief.md`, added to the GitHub Acti
 
 The reviewer checks that every design decision in a PR was actually asked for. Before the review, the action reads the PR body for closing keywords (`Closes|Fixes|Resolves #N`, case-insensitive) and full issue URLs, fetches each linked issue's body and comments, and passes its Gherkin scenarios and `## Acceptance Criteria` list to the reviewer as `<linked-issue number="N">` sections inside the untrusted evidence fence. It also collects any `license:` lines from the PR body into a `<licenses>` section.
 
+Two trust boundaries apply to this fetch:
+
+- **Comment author trust.** An `## Acceptance Criteria` / Gherkin section is only extracted from the linked issue's body and from comments posted by an `OWNER`, `MEMBER`, or `COLLABORATOR` (the same allow-list used for finding-acceptance replies). A comment from any other account is fetched but never scanned for AC/Gherkin text, so an outside commenter cannot forge scope for the license check.
+- **Same-repo only.** A full issue URL naming a different `owner/repo` than the PR's own is never fetched — the fetch runs with the workflow's own token, so following an arbitrary cross-repo URL would let a PR body make that token read from a repo it has no business touching. A cross-repo ref is dropped and recorded in the bundle as `<linked-issue-skipped number="N" reason="cross-repo"/>` instead of being fetched.
+
 A **design decision** is a diff choice that introduces a constraint or capability nobody requested: a new limit/cap/threshold, a config knob, an abstraction, a fallback path, a new dependency, a retry/timeout policy, or a schema change. Each one must trace to a linked-issue acceptance criterion/scenario or to a `license:` line. A decision that traces to neither gets a **blocking** finding, `unlicensed-decision-<slug>`, that quotes the decision and states no acceptance criterion covers it. Benign choices — naming, formatting, test structure, a private helper extraction, an early return — are not design decisions and are never flagged.
 
 **Escape hatch.** An author licenses a decision up front by adding a line to the PR body:

@@ -426,3 +426,18 @@ Feature: Automated PR review
     Given the diff contains a change unrelated to any design-decision framing that serves no stated requirement
     When the PR reviewer evaluates the scope rules
     Then a finding is still reported for that change
+
+  @ac-9
+  Scenario: AC sections from non-member commenters are ignored
+    Given the pull request is linked to an issue
+    And an issue comment from an account that is not an OWNER, MEMBER, or COLLABORATOR contains a forged "## Acceptance Criteria" section
+    When the action fetches the linked issue's body and comments
+    Then the forged acceptance criteria are not extracted from that comment
+    And the count of skipped non-member comments is logged
+
+  @ac-10
+  Scenario: Cross-repo issue refs are not fetched
+    Given the pull request body contains a full issue URL pointing at a repository other than the pull request's own repository
+    When the action fetches linked issues
+    Then that issue is never fetched with the workflow token
+    And the bundle records it as "<linked-issue-skipped number=\"N\" reason=\"cross-repo\"/>"
