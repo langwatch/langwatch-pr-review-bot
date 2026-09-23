@@ -192,7 +192,7 @@ The generated brief is written to `pr-review-brief.md`, added to the GitHub Acti
 
 ### Licensing design decisions
 
-The reviewer checks that every design decision in a PR was actually asked for. Before the review, the action reads the PR body for closing keywords (`Closes|Fixes|Resolves #N`, case-insensitive) and full issue URLs, fetches each linked issue's body and comments, and passes its Gherkin scenarios and `## Acceptance Criteria` list to the reviewer as `<linked-issue number="N">` sections inside the untrusted evidence fence. It also collects any `license:` lines from the PR body into a `<licenses>` section.
+The reviewer checks that every design decision in a PR was actually asked for. Before the review, the action reads the PR body for closing keywords (`Closes|Fixes|Resolves #N`, case-insensitive) and full issue URLs, fetches each linked issue's body and comments, and passes its Gherkin scenarios and `## Acceptance Criteria` list to the reviewer as `<linked-issue number="N">` sections inside the untrusted evidence fence. It also collects `license:` lines from the PR body into a `<licenses>` section — but only lines matching the two documented escape-hatch forms below (case-insensitive, leading `-`/`*` list markers allowed); a line that merely mentions "license:" mid-sentence is prose, not a decision, and is never collected.
 
 Two trust boundaries apply to this fetch:
 
@@ -201,12 +201,12 @@ Two trust boundaries apply to this fetch:
 
 A **design decision** is a diff choice that introduces a constraint or capability nobody requested: a new limit/cap/threshold, a config knob, an abstraction, a fallback path, a new dependency, a retry/timeout policy, or a schema change. Each one must trace to a linked-issue acceptance criterion/scenario or to a `license:` line. A decision that traces to neither gets a **blocking** finding, `unlicensed-decision-<slug>`, that quotes the decision and states no acceptance criterion covers it. Benign choices — naming, formatting, test structure, a private helper extraction, an early return — are not design decisions and are never flagged.
 
-**Escape hatch.** An author licenses a decision up front by adding a line to the PR body:
+**Escape hatch.** An author licenses a decision up front by adding a line to the PR body, in one of exactly two forms (the keywords are case-insensitive; a leading `-` or `*` list marker is allowed):
 
-- `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
-- `license: owner ratified <url>` — the owner ratified it out of band; link the ratification.
+- A line starting with `Decision:` that also contains a dash (`—`, `-`, or `--`) followed by `license:`, e.g. `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
+- A line starting with `license:`, e.g. `license: owner ratified <url>` — the owner ratified it out of band; link the ratification.
 
-Either line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.
+No other phrasing counts — a sentence that happens to contain the word "license:" without starting the line (or, for the `Decision:` form, without the dash-separated `license:` clause) is not collected. Either matching line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.
 
 When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses. It then posts a single **non-blocking** `no-linked-issue` note saying so, and flags no individual decisions.
 

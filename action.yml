@@ -581,7 +581,20 @@ runs:
             # Trailing newline so a `while read` loop does not skip the final ref.
             f.write("".join(r + "\n" for r in ordered))
         # Any PR-body line carrying a "license:" statement (the decision escape hatch).
-        lic = [ln.strip() for ln in body.splitlines() if re.search(r'\blicense:', ln, re.I)]
+        # Only the two documented forms count: a bare "license: ..." line, or a
+        # "Decision: ... <dash> license: ..." line (dash is em dash, "-" or "--").
+        # A prose line that merely mentions "license:" mid-sentence is not a decision
+        # and must not land in <licenses> (bot finding, PR #16).
+        def _is_license_line(ln):
+            core = re.sub(r'^[-*]\s*', '', ln.strip())
+            if re.match(r'(?i)^license\s*:', core):
+                return True
+            if re.match(r'(?i)^decision\s*:', core) and \
+               re.search(r'\s(?:--|—|-)\s+license\s*:', core, re.I):
+                return True
+            return False
+
+        lic = [ln.strip() for ln in body.splitlines() if ln.strip() and _is_license_line(ln)]
         with open(sys.argv[2], "w") as f:
             f.write("\n".join(lic))
         PYEOF
