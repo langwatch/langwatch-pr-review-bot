@@ -440,7 +440,7 @@ Feature: Automated PR review
     Given the pull request body contains a full issue URL pointing at a repository other than the pull request's own repository
     When the action fetches linked issues
     Then that issue is never fetched with the workflow token
-    And the bundle records it as "<linked-issue-skipped number=\"N\" reason=\"cross-repo\"/>"
+    And the bundle records it as "<linked-issue-skipped repo=\"owner/name\" number=\"N\" reason=\"cross-repo\"/>"
 
   @ac-11
   Scenario: Closing keywords and same-repo issue URLs extract and dedupe to one ref

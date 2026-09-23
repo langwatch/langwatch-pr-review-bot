@@ -630,9 +630,14 @@ runs:
             if gh api "/repos/${iowner}/${irepo}/issues/${inum}/comments" --paginate > "$icomments_raw" 2>/dev/null; then
               icomments="$(jq -sc 'add // [] | [.[] | {body: (.body // ""), association: (.author_association // "NONE")}]' "$icomments_raw")"
             else
+              echo "::warning::Could not fetch comments for linked issue ${iowner}/${irepo}#${inum}; reviewing its body only."
               icomments='[]'
             fi
             [[ -n "$icomments" ]] || icomments='[]'
+            icomments_dropped="$(jq --argjson allowed "$member_assoc_json" '[.[] | select(.association as $a | ($allowed | index($a)) | not)] | length' <<<"$icomments")"
+            if [[ "$icomments_dropped" -gt 0 ]]; then
+              echo "Dropped ${icomments_dropped} non-member comment(s) on ${iowner}/${irepo}#${inum}"
+            fi
             icomments="$(jq -c --argjson allowed "$member_assoc_json" '[.[] | select(.association as $a | $allowed | index($a)) | .body]' <<<"$icomments")"
             jq -c --argjson n "$inum" --arg b "$ibody" --argjson c "$icomments" \
               '. + [{number:$n, body:$b, comments:$c}]' "$linked_issues_json" > "${linked_issues_json}.tmp" \
@@ -685,7 +690,7 @@ runs:
         except Exception:
             skipped = []
         for it in skipped:
-            out.append('<linked-issue-skipped number="{}" reason="cross-repo"/>'.format(it.get("number")))
+            out.append('<linked-issue-skipped repo="{}" number="{}" reason="cross-repo"/>'.format(esc(it.get("repo") or ""), it.get("number")))
         sys.stdout.write("\n".join(out))
         PYEOF
         )"
