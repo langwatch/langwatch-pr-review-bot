@@ -12,6 +12,10 @@ inputs:
     description: 'Post a Slack notification on blocking findings (needs slack_webhook_url).'
     required: false
     default: "true"
+  max_linked_issues:
+    description: 'Maximum number of linked issues to fetch context for; extras are dropped.'
+    required: false
+    default: "3"
   extra_instructions:
     description: 'Extra guidance appended to the review prompt, subordinate to the action''s rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted.'
     required: false
@@ -314,6 +318,7 @@ runs:
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         REPOSITORY: ${{ github.repository }}
+        MAX_LINKED_ISSUES: ${{ inputs.max_linked_issues }}
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BODY: ${{ github.event.pull_request.body || '(empty)' }}
       run: |
@@ -577,6 +582,15 @@ runs:
             if r not in seen:
                 seen.add(r)
                 ordered.append(r)
+        # Cap the number of linked issues we fetch context for. Extras beyond the
+        # limit are dropped so a PR that references many issues cannot balloon the
+        # review bundle.
+        try:
+            max_linked = int(os.environ.get("MAX_LINKED_ISSUES", "3"))
+        except ValueError:
+            max_linked = 3
+        if max_linked >= 0:
+            ordered = ordered[:max_linked]
         with open(sys.argv[1], "w") as f:
             # Trailing newline so a `while read` loop does not skip the final ref.
             f.write("".join(r + "\n" for r in ordered))
