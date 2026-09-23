@@ -590,7 +590,7 @@ runs:
             if re.match(r'(?i)^license\s*:', core):
                 return True
             if re.match(r'(?i)^decision\s*:', core) and \
-               re.search(r'\s(?:--|—|-)\s+license\s*:', core, re.I):
+               re.search(r'\s*(?:—|–|--|-)\s*license\s*:', core, re.I):
                 return True
             return False
 

@@ -203,7 +203,7 @@ A **design decision** is a diff choice that introduces a constraint or capabilit
 
 **Escape hatch.** An author licenses a decision up front by adding a line to the PR body, in one of exactly two forms (the keywords are case-insensitive; a leading `-` or `*` list marker is allowed):
 
-- A line starting with `Decision:` that also contains a dash (`—`, `-`, or `--`) followed by `license:`, e.g. `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
+- A line starting with `Decision:` that also contains a dash (`—`, `–`, `-`, or `--`) followed by `license:`; spacing around the dash is optional, e.g. `Decision: <what> — license: AC-<n>` — the decision is covered by acceptance criterion _n_.
 - A line starting with `license:`, e.g. `license: owner ratified <url>` — the owner ratified it out of band; link the ratification.
 
 No other phrasing counts — a sentence that happens to contain the word "license:" without starting the line (or, for the `Decision:` form, without the dash-separated `license:` clause) is not collected. Either matching line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.

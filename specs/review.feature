@@ -475,8 +475,9 @@ Feature: Automated PR review
   @ac-15
   Scenario: Prose that mentions "license:" is not collected as a license line
     Given the pull request body contains a "Decision: X — license: AC-2" line
+    And the pull request body contains a "Decision: X—license: AC-2" line
     And the pull request body contains a "license: owner ratified https://example.com/policy" line
     And the pull request body contains a prose sentence "We talked about the license: policy in general"
     When the action extracts "license:" lines from the pull request body
-    Then the "Decision:" line and the "license:" line are collected into the "<licenses>" section
+    Then the "Decision:" lines and the "license:" line are collected into the "<licenses>" section
     And the prose sentence is not collected
