@@ -445,25 +445,16 @@ runs:
           return 1
         }
 
-        # There is NO byte cap on the diff handed to the reviewer. The reviewer is an
-        # agentic `claude -p` session (the same binary as pr-brief): it reads the bundled
-        # review-input file across as many turns as it needs — Read with offset/limit per
-        # file, Grep, per-file diffs — so it is never constrained to fit the whole diff
-        # into a single context read. The old DIFF_BYTE_BUDGET (512 KiB) conflated "fits
-        # in one read call" with "fits in one review pass"; for an agentic reader those
-        # are not the same constraint, and the real limit (API request size) sits far
-        # above it. The cap was a false premise that gave a large hand-written PR (nothing
-        # to elide) a partial review, so it was removed — owner-directed: "512k is
-        # insanely small ... there is no reason to cap. We should leverage Claude
-        # maximally." The bundle is the FULL elided diff; total_files stays the FULL
-        # changed-file count (generated files included) so the reader learns the true
-        # size of the PR, not just what survived elision.
+        # The bundle is the full elided diff, read agentically by the reviewer across
+        # as many turns as it needs (Read with offset/limit per file, Grep). There is
+        # no byte cap. total_files stays the full changed-file count (generated files
+        # included) so the reader learns the true size of the PR, not just what
+        # survived elision.
         total_files="${#changed_paths[@]}"
-        cp pr.diff pr.diff.shown
         # shown_files reflects what reaches the reviewer: the full elided diff, i.e. every
         # changed file except those elided as generated. With no cap it always equals
         # total_files minus the generated count.
-        shown_files="$(grep -c '^diff --git ' pr.diff.shown || true)"
+        shown_files="$(grep -c '^diff --git ' pr.diff || true)"
         # Note the elided generated file NAMES at the end of the bundle, one per line, so
         # the reviewer sees exactly what was withheld.
         if [[ "$generated_count" -gt 0 ]]; then
@@ -471,7 +462,7 @@ runs:
             printf '\n[generated files elided (%s), reviewed only if a finding depends on them:\n' "$generated_count"
             printf '%s\n' "${generated_paths[@]}"
             printf ']\n'
-          } >> pr.diff.shown
+          } >> pr.diff
         fi
 
         # US-4: give the reviewer the human replies on its own finding threads so it
@@ -546,7 +537,7 @@ runs:
           dismissed_block="$(jq -rn --argjson d "$dismissed_ids_eff" 'if ($d | length) == 0 then "" else "<dismissed-findings>\n" + ([$d[] | "<finding id=\"" + . + "\"/>"] | join("\n")) + "\n</dismissed-findings>" end')"
         fi
 
-        # The title, description, and (bounded) diff are written to a file in the
+        # The title, description, and diff are written to a file in the
         # workspace, alongside pr.diff/commentable.json, and referenced by path. The
         # bundle is NEVER piped to the reviewer on stdin, which rejects piped input over
         # 10MB. Keeping it in the workspace (which the agent already reads) avoids a
@@ -561,7 +552,7 @@ runs:
           printf '<diff-coverage total-files="%s" shown-files="%s" generated-files="%s"/>\n' \
             "$total_files" "$shown_files" "$generated_count"
           printf '%s\n' '<pr-diff>'
-          cat pr.diff.shown
+          cat pr.diff
           printf '%s\n' '</pr-diff>'
           if [[ -n "$threads_block" ]]; then
             printf '%s\n' "$threads_block"
@@ -633,7 +624,7 @@ runs:
         # full and never claim coverage of any part it did not actually read.
         large_diff_note=" The diff in that file is complete and uncapped; on a large PR it may be big. Read it IN FULL — page through it with Read using offset/limit per file, and Grep to navigate — and never claim coverage of any file or change you did not actually read."
         # The elided file NAMES are PR-controlled, so they stay inside the untrusted
-        # <review-input> bundle (pr.diff.shown trailer) and never enter the trusted
+        # <review-input> bundle (pr.diff trailer) and never enter the trusted
         # prompt. The prompt carries only the count and the handling instruction.
         generated_note=""
         if [[ "$generated_count" -gt 0 ]]; then
