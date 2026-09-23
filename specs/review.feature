@@ -310,26 +310,20 @@ Feature: Automated PR review
     And no PR body or diff is piped to the reviewer on standard input
     And the review runs without exceeding the input size limit
 
-  Scenario: A diff larger than the byte budget is truncated before review
-    Given a pull request whose diff exceeds the documented diff byte budget
+  Scenario: The diff is never capped and is reviewed whole at any size
+    Given a pull request whose elided diff is arbitrarily large
     When the PR reviewer runs
-    Then only the first budget bytes of the diff are written into the review bundle
-    And the bundle ends with a truncation trailer stating the total and budget bytes
+    Then the whole elided diff is written into the review bundle with no truncation trailer
     And the bundle records the total file count and the shown file count
-    And the prompt tells the reviewer the diff is partial and not to claim coverage of unseen files
+    And the prompt tells the reviewer the diff may be large and to read it in full
+    And the prompt tells the reviewer never to claim coverage of any part it did not read
     And the review body begins with the signature "@LangWatchReviewBot"
-    And the review body then states the diff was truncated and findings cover the shown portion only
-
-  Scenario: A diff within the byte budget is reviewed whole
-    Given a pull request whose diff is within the documented diff byte budget
-    When the PR reviewer runs
-    Then the whole diff is written into the review bundle with no truncation trailer
     And the review body carries no truncation notice
 
   Scenario: Generated files are elided from the review diff and reported
     Given a pull request that changes files marked "linguist-generated=true" in the base branch .gitattributes
     When the PR reviewer runs
-    Then those files are excluded from the diff before the byte budget is applied
+    Then those files are excluded from the diff
     And the review bundle names the elided generated files and their count
     And the prompt tells the reviewer the count of elided files and not to review their contents line-by-line
     And the prompt does not contain the elided file names
@@ -367,9 +361,9 @@ Feature: Automated PR review
     And the review body carries no generated-files notice
     And the generated-elided output is zero
 
-  Scenario: Truncation counts reflect the elided diff
-    Given a pull request whose diff exceeds the byte budget only because of generated files
-    When the generated files are elided and the remaining diff is within the byte budget
+  Scenario: Eliding generated files never adds a truncation notice
+    Given a pull request whose diff is large because of generated files
+    When the generated files are elided and the remaining diff is reviewed
     Then the remaining diff is reviewed whole with no truncation trailer
     And the review body carries no truncation notice
     And the review body reports the generated files that were elided
