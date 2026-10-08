@@ -1392,9 +1392,10 @@ runs:
     - name: Report that the review could not run
       # Best-effort: the notice is a COMMENT, never APPROVE or REQUEST_CHANGES, and this
       # step never exits non-zero. Runs only when the review step ran and failed: a skipped
-      # review step (failed checkout check, empty token, failed context or Node setup) means a
-      # red config error, where a "this check passes" notice would be false. An Install/Verify
-      # failure still lands here because the review step then runs and fails.
+      # review step (failed caller-setup check, empty token, failed context, missing trusted
+      # file) means a red config error, where a "this check passes" notice would be false. A
+      # Node setup or Install/Verify failure still lands here because the review step then
+      # runs and fails.
       # Not posted when review_failed is set: a blocking run whose POST failed still fails the job.
       if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'failure' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' }}
       shell: bash

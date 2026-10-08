@@ -53,7 +53,7 @@ Feature: Automated PR review
     And the PR reviewer status check passes
 
   Scenario: A caller setup error stays red with no notice
-    Given the checkout lacks the PR commits, the Claude token is empty, or a trusted rules, agent or skill file is missing
+    Given the checkout lacks the PR commits, the Claude token is empty, a trusted rules, agent or skill file is missing, or review_timeout_minutes is not a positive whole number
     When the pipeline runs
     Then the run fails with a clear error
     And no review-could-not-run notice is posted
