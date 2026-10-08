@@ -1,0 +1,176 @@
+name: Action tests
+
+# End-to-end tests of the review verdicts (issue #18). Each job runs only when its label
+# is added, so pushes and other labels never re-run it.
+#   test:infra-error     invalid Claude token: job green, COMMENT notice, no verdict review.
+#   test:verdict-clean   fake reviewer, no findings: job green, COMMENT, never APPROVE.
+#   test:verdict-blocking fake reviewer, one blocking finding: job red, REQUEST_CHANGES.
+# Add the labels ONE AT A TIME on a throwaway PR: each posts real reviews on it.
+# review.yml does not trigger on `labeled`, so its runs cannot race the assertions.
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  infra-error:
+    if: github.event.label.name == 'test:infra-error'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record start time
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: ./
+        id: action
+        with:
+          # Non-empty but invalid: the auth-presence check passes, the API call fails.
+          claude_oauth_token: 'sk-ant-oat01-invalid-token-for-infra-error-test'
+          review_label: 'test:infra-error'
+          slack_notify: 'false'
+
+      # Reaching this step proves the action step passed (the job is green so far).
+      - name: Assert the infra path
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          START_AT: ${{ steps.start.outputs.at }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
+          notices="$(jq --arg sha "$HEAD_SHA" --arg url "$RUN_URL" '[.[] | select(.commit_id == $sha and .state == "COMMENTED" and ((.body // "") | contains("<!-- review-infra-error -->")) and ((.body // "") | contains($url)))] | length' <<< "$reviews")"
+          verdicts="$(jq --arg sha "$HEAD_SHA" --arg start "$START_AT" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and (.state == "APPROVED" or .state == "CHANGES_REQUESTED") and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews")"
+          echo "infra notices on head: $notices; approve/request-changes bot reviews on head: $verdicts"
+          if [[ "$notices" -lt 1 ]]; then
+            echo "::error::No COMMENTED review-could-not-run notice found on the head commit."
+            exit 1
+          fi
+          if [[ "$verdicts" -ne 0 ]]; then
+            echo "::error::The bot posted an APPROVED or CHANGES_REQUESTED review on an infra error."
+            exit 1
+          fi
+
+  verdict-clean:
+    if: github.event.label.name == 'test:verdict-clean'
+    runs-on: ubuntu-latest
+    env:
+      # setup-node prepends its bin dir to PATH after our fake is added, so the npm-installed
+      # claude would shadow the fake; a prefix off PATH keeps the real claude out of the way.
+      NPM_CONFIG_PREFIX: ${{ github.workspace }}/../npm-global-off-path
+      FAKE_REVIEW_JSON: '{"findings":[],"resolved":[],"accepted":[]}'
+    steps:
+      - name: Record start time
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # Prepended to PATH so it shadows the npm-installed claude: no API call, a fixed verdict.
+      - name: Install fake claude
+        run: |
+          dir="$RUNNER_TEMP/fake-claude"
+          mkdir -p "$dir"
+          cat > "$dir/claude" <<'FAKE'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "--version" ]]; then
+            echo "fake-claude 0.0.0"
+            exit 0
+          fi
+          jq -n --arg r "$FAKE_REVIEW_JSON" '{type:"result",subtype:"success",is_error:false,session_id:"fake-session",result:$r}'
+          FAKE
+          chmod +x "$dir/claude"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - uses: ./
+        id: action
+        with:
+          claude_oauth_token: 'dummy-token-fake-claude'
+          review_label: 'test:verdict-clean'
+          slack_notify: 'false'
+
+      - name: Assert a clean review posts COMMENT
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          START_AT: ${{ steps.start.outputs.at }}
+          ACTION_OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
+          count() { jq --arg sha "$HEAD_SHA" --arg start "$START_AT" --arg st "$1" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and .state == $st and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews"; }
+          commented="$(count COMMENTED)"; approved="$(count APPROVED)"
+          echo "action outcome: $ACTION_OUTCOME; signed COMMENTED: $commented; signed APPROVED: $approved"
+          [[ "$ACTION_OUTCOME" == "success" ]] || { echo "::error::The action step did not succeed on a clean review."; exit 1; }
+          [[ "$commented" -ge 1 ]] || { echo "::error::No signed COMMENTED review on the head commit."; exit 1; }
+          [[ "$approved" -eq 0 ]] || { echo "::error::The bot approved; a clean review must only comment."; exit 1; }
+
+  verdict-blocking:
+    if: github.event.label.name == 'test:verdict-blocking'
+    runs-on: ubuntu-latest
+    env:
+      # setup-node prepends its bin dir to PATH after our fake is added, so the npm-installed
+      # claude would shadow the fake; a prefix off PATH keeps the real claude out of the way.
+      NPM_CONFIG_PREFIX: ${{ github.workspace }}/../npm-global-off-path
+      FAKE_REVIEW_JSON: '{"findings":[{"id":"test-blocking-finding","status":"new","summary":"Test blocking finding.","fix":"None needed; this is a fake review.","path":"README.md","line":1,"priority":"P0","blocking":true}],"resolved":[],"accepted":[]}'
+    steps:
+      - name: Record start time
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      # Prepended to PATH so it shadows the npm-installed claude: no API call, a fixed verdict.
+      - name: Install fake claude
+        run: |
+          dir="$RUNNER_TEMP/fake-claude"
+          mkdir -p "$dir"
+          cat > "$dir/claude" <<'FAKE'
+          #!/usr/bin/env bash
+          if [[ "${1:-}" == "--version" ]]; then
+            echo "fake-claude 0.0.0"
+            exit 0
+          fi
+          jq -n --arg r "$FAKE_REVIEW_JSON" '{type:"result",subtype:"success",is_error:false,session_id:"fake-session",result:$r}'
+          FAKE
+          chmod +x "$dir/claude"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - uses: ./
+        id: action
+        continue-on-error: true
+        with:
+          claude_oauth_token: 'dummy-token-fake-claude'
+          review_label: 'test:verdict-blocking'
+          slack_notify: 'false'
+
+      - name: Assert a blocking review requests changes and fails the job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          START_AT: ${{ steps.start.outputs.at }}
+          ACTION_OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
+          changes="$(jq --arg sha "$HEAD_SHA" --arg start "$START_AT" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and .state == "CHANGES_REQUESTED" and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews")"
+          echo "action outcome: $ACTION_OUTCOME; signed CHANGES_REQUESTED: $changes"
+          [[ "$ACTION_OUTCOME" == "failure" ]] || { echo "::error::The action step should fail on a blocking finding."; exit 1; }
+          [[ "$changes" -ge 1 ]] || { echo "::error::No signed CHANGES_REQUESTED review on the head commit."; exit 1; }

@@ -191,12 +191,6 @@ Feature: Automated PR review
     Then the new finding blocks the review
     And it is not auto-accepted on the basis of the earlier dismissal
 
-  Scenario: A later clean comment review is the bot's latest verdict after a dismissal
-    Given a human dismissed the bot's changes-requested review
-    And the bot then posted a clean comment review
-    When a later push introduces a new blocking problem
-    Then the new finding blocks the review
-
   Scenario: Dismissing a legacy approving review by the bot does not accept its findings
     Given the bot's most recent review is a legacy approval that a human then dismissed
     When the bot reviews the next push

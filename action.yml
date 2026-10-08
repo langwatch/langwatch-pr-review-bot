@@ -310,6 +310,23 @@ runs:
         test -f "$HOME/.claude/skills/pr-brief/SKILL.md"
         test -f "$HOME/.claude/skills/pr-brief/TEMPLATE.md"
 
+    - name: Check the checkout has the PR commits
+      id: checkout-check
+      # A caller setup error (shallow or wrong checkout), not an infra error: its own
+      # step without continue-on-error so it stays red, and the review step is skipped.
+      if: ${{ steps.context.outputs.skip != 'true' }}
+      shell: bash
+      env:
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        # actions/checkout with fetch-depth: 0 already has full history, including the
+        # base sha object, so no extra fetch is needed before the three-dot diff.
+        if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
+          exit 1
+        fi
+
     - name: Run automated review
       id: review
       # An infra error (Claude/API failure, timeout, unusable output) must never block
@@ -339,12 +356,6 @@ runs:
       run: |
         set -euo pipefail
 
-        # actions/checkout with fetch-depth: 0 already has full history, including the
-        # base sha object, so no extra fetch is needed before the three-dot diff.
-        if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
-          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
-          exit 1
-        fi
         # Elide files marked `linguist-generated=true` in the .gitattributes ON THE
         # BASE BRANCH before the diff bundle is built. Generated blobs (prisma
         # manifests, large fixtures) can be tens of thousands of lines and would
@@ -1121,7 +1132,6 @@ runs:
       # abort the review or flip the job red. Gated on the review having been posted
       # (review_posted); it needs the review's files, so it is skipped otherwise.
       if: ${{ steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
-      continue-on-error: true
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1373,7 +1383,7 @@ runs:
       # step never exits non-zero. Runs whenever no review was posted: the review step
       # failed, or an earlier setup step failed and the review step was skipped.
       # Not posted when review_failed is set: a blocking run whose POST failed still fails the job.
-      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' }}
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' && steps.checkout-check.outcome != 'failure' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
