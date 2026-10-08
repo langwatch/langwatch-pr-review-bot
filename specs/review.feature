@@ -46,6 +46,18 @@ Feature: Automated PR review
     And it posts no approval and no "changes requested" review
     And the PR reviewer status check passes
 
+  Scenario: An install failure is an infrastructure error
+    Given installing or verifying Claude Code fails
+    When the pipeline runs
+    Then the bot posts a "comment" review saying the review could not run
+    And the PR reviewer status check passes
+
+  Scenario: A caller setup error stays red with no notice
+    Given the checkout lacks the PR commits, the Claude token is empty, or a trusted rules, agent or skill file is missing
+    When the pipeline runs
+    Then the run fails with a clear error
+    And no review-could-not-run notice is posted
+
   Scenario: An infrastructure notice is not treated as a verdict
     Given a human dismissed the bot's changes-requested review
     And the bot later posted a review-could-not-run notice

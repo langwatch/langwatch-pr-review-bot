@@ -237,12 +237,13 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Set up Node.js
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: '22'
 
-    # Install/verify are network or npm infra: a failure here makes the review step
+    # Node setup, install and verify are network or npm infra: a failure here makes the review step
     # fail, which posts the could-not-run notice and keeps the check green.
     - name: Install Claude Code
       continue-on-error: true

@@ -78,21 +78,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Prepended to PATH so it shadows the npm-installed claude: no API call, a fixed verdict.
       - name: Install fake claude
-        run: |
-          dir="$RUNNER_TEMP/fake-claude"
-          mkdir -p "$dir"
-          cat > "$dir/claude" <<'FAKE'
-          #!/usr/bin/env bash
-          if [[ "${1:-}" == "--version" ]]; then
-            echo "fake-claude 0.0.0"
-            exit 0
-          fi
-          jq -n --arg r "$FAKE_REVIEW_JSON" '{type:"result",subtype:"success",is_error:false,session_id:"fake-session",result:$r}'
-          FAKE
-          chmod +x "$dir/claude"
-          echo "$dir" >> "$GITHUB_PATH"
+        uses: ./.github/actions/fake-claude
 
       - uses: ./
         id: action
@@ -111,7 +98,7 @@ jobs:
           ACTION_OUTCOME: ${{ steps.action.outcome }}
         run: |
           reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
-          count() { jq --arg sha "$HEAD_SHA" --arg start "$START_AT" --arg st "$1" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and .state == $st and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews"; }
+          count() { jq --arg sha "$HEAD_SHA" --arg start "$START_AT" --arg st "$1" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and .state == $st and (((.body // "") | contains("<!-- review-infra-error -->")) | not) and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews"; }
           commented="$(count COMMENTED)"; approved="$(count APPROVED)"
           echo "action outcome: $ACTION_OUTCOME; signed COMMENTED: $commented; signed APPROVED: $approved"
           [[ "$ACTION_OUTCOME" == "success" ]] || { echo "::error::The action step did not succeed on a clean review."; exit 1; }
@@ -136,21 +123,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Prepended to PATH so it shadows the npm-installed claude: no API call, a fixed verdict.
       - name: Install fake claude
-        run: |
-          dir="$RUNNER_TEMP/fake-claude"
-          mkdir -p "$dir"
-          cat > "$dir/claude" <<'FAKE'
-          #!/usr/bin/env bash
-          if [[ "${1:-}" == "--version" ]]; then
-            echo "fake-claude 0.0.0"
-            exit 0
-          fi
-          jq -n --arg r "$FAKE_REVIEW_JSON" '{type:"result",subtype:"success",is_error:false,session_id:"fake-session",result:$r}'
-          FAKE
-          chmod +x "$dir/claude"
-          echo "$dir" >> "$GITHUB_PATH"
+        uses: ./.github/actions/fake-claude
 
       - uses: ./
         id: action
