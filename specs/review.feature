@@ -39,12 +39,6 @@ Feature: Automated PR review
     When the pipeline extracts the findings
     Then the findings are accepted
 
-  Scenario: Reviewer output cannot be used
-    Given all prerequisite checks are green
-    When the PR reviewer fails to complete or returns findings in an unusable shape
-    Then the bot posts a "comment" review saying the review could not run
-    And the PR reviewer status check passes
-
   Scenario: An infrastructure error does not block the merge
     Given the reviewer call fails, times out, or returns unusable output
     When the pipeline runs

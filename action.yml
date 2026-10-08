@@ -159,8 +159,9 @@ runs:
         #
         # Fire ONCE per dismissal: US-5 applies only when the DISMISSED review is the
         # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED/COMMENTED).
-        # A signed COMMENT is the bot's clean verdict; unsigned COMMENTED reviews from
-        # thread replies are excluded by the signature check. Once the bot answers the
+        # A signed COMMENT is the bot's clean verdict. The only signed COMMENTED reviews
+        # the bot posts are that verdict and the infra notice, and the notice is excluded
+        # by its marker. Once the bot answers the
         # dismissal with a new (clean) review,
         # that review becomes the latest verdict, so findings raised on later pushes block
         # normally and a stale dismissal can never auto-accept future findings.
@@ -241,7 +242,10 @@ runs:
       with:
         node-version: '22'
 
+    # Install/verify/load are network or npm infra: a failure here makes the review step
+    # fail, which posts the could-not-run notice and keeps the check green.
     - name: Install Claude Code
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
@@ -249,6 +253,7 @@ runs:
       run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
     - name: Verify Claude Code
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       run: claude --version
@@ -283,6 +288,7 @@ runs:
     # github.action_path, never from the PR-controlled working tree. See the trust
     # explanation on the "Run automated review" step below.
     - name: Load trusted rules, agent, and skills from the action
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
@@ -308,8 +314,8 @@ runs:
       id: review
       # An infra error (Claude/API failure, timeout, unusable output) must never block
       # the merge: only blocking findings fail the job, via review_failed and the final
-      # step. Outputs written to $GITHUB_OUTPUT before a failure are kept, so a blocking
-      # run that later crashes still fails the job.
+      # step. review_failed is written before the POST and review_posted right after it,
+      # so a crash after posting never flips a blocking run green or adds an infra notice.
       continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
@@ -1029,6 +1035,13 @@ runs:
           event='COMMENT'
         fi
 
+        # Written before the POST so any later crash still fails a blocking run.
+        if [[ "$blocking" -gt 0 ]]; then
+          echo 'review_failed=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'review_failed=false' >> "$GITHUB_OUTPUT"
+        fi
+
         # Inline comments are posted ONLY for status=="new" findings anchored to a diff
         # line. "open" findings get no new inline comment. Body is problem + fix only.
         jq -n \
@@ -1047,6 +1060,7 @@ runs:
           echo "::group::review-payload.json"; cat review-payload.json; echo "::endgroup::"
           exit 1
         fi
+        echo 'review_posted=true' >> "$GITHUB_OUTPUT"
 
         # Fetch the just-posted review's inline comments and map each finding id to its
         # permanent html_url, matched on the "<!-- id:<slug> -->" marker embedded in the
@@ -1076,7 +1090,7 @@ runs:
               -X POST \
               -H 'Content-Type: application/json' \
               --data @slack-payload.json \
-              "$SLACK_WEBHOOK_URL"
+              "$SLACK_WEBHOOK_URL" || echo "::warning::Slack notification failed."
           elif [[ "${SLACK_NOTIFY}" != "true" ]]; then
             echo "slack_notify is disabled; skipping Slack notification."
           else
@@ -1084,11 +1098,6 @@ runs:
           fi
         fi
 
-        if [[ "$blocking" -gt 0 ]]; then
-          echo 'review_failed=true' >> "$GITHUB_OUTPUT"
-        else
-          echo 'review_failed=false' >> "$GITHUB_OUTPUT"
-        fi
         echo "generated_elided=${generated_count}" >> "$GITHUB_OUTPUT"
 
         {
@@ -1109,11 +1118,9 @@ runs:
 
     - name: Self-cleaning
       # Its own step (its own set +e scope) so a best-effort API failure here can never
-      # abort the review or flip the job red. always() so it still runs after a review
-      # that requested changes; guarded on the same skip gate and on the review having
-      # actually been posted (review-response.json present). It needs the review's
-      # files, so it is skipped when the review step crashed.
-      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
+      # abort the review or flip the job red. Gated on the review having been posted
+      # (review_posted); it needs the review's files, so it is skipped otherwise.
+      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
       continue-on-error: true
       shell: bash
       env:
@@ -1264,10 +1271,11 @@ runs:
 
     - name: Generate human review brief
       # A brief failure is infra: it must not fail the required check.
-      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
+      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
       continue-on-error: true
       shell: bash
       env:
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
         OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${{ inputs.langwatch_ingest_key }}"
         ACTION_PATH: ${{ github.action_path }}
@@ -1305,7 +1313,7 @@ runs:
         template_path="$ACTION_PATH/.claude/skills/pr-brief/TEMPLATE.md"
 
         rc=0
-        claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. The pull request title, description, and review result are in the file ${brief_input_file}; read that file for the PR context. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
+        timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. The pull request title, description, and review result are in the file ${brief_input_file}; read that file for the PR context. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
           --add-dir "$ACTION_PATH" \
           --continue \
           --agent pr-reviewer \
@@ -1362,9 +1370,10 @@ runs:
 
     - name: Report that the review could not run
       # Best-effort: the notice is a COMMENT, never APPROVE or REQUEST_CHANGES, and this
-      # step never exits non-zero. Skipped when a blocking review set review_failed (that
-      # run already posted its review).
-      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'failure' && steps.review.outputs.review_failed != 'true' }}
+      # step never exits non-zero. Runs whenever no review was posted: the review step
+      # failed, or an earlier setup step failed and the review step was skipped.
+      # Not posted when review_failed is set: a blocking run whose POST failed still fails the job.
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1385,10 +1394,10 @@ runs:
         exit 0
 
     # Save the session directory (review + brief conversation) under the immutable
-    # run-scoped key so the next run for this PR restores and resumes it. A blocking
-    # review step still succeeds, so those runs save; a crashed run never persists.
+    # run-scoped key so the next run for this PR restores and resumes it. Saved only
+    # once a review was posted (review_posted), blocking or not; an unposted run never persists.
     - name: Save Claude session
-      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.claude/projects
@@ -1402,6 +1411,7 @@ runs:
         path: pr-review-brief.md
 
     - name: Fail when violations were found
-      if: ${{ steps.review.outputs.review_failed == 'true' }}
+      # always() so an earlier step failure can never skip the blocking verdict.
+      if: ${{ always() && steps.review.outputs.review_failed == 'true' }}
       shell: bash
       run: exit 1
