@@ -29,7 +29,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Inline review comments are posted only for findings inside the PR diff; findings outside the diff (new and still-open) are listed in the review body under "Outside the diff".
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A review with no blocking finding posts `COMMENT`, never `APPROVE` (the bot is a required check, not an approval); a review with any blocking finding (new or still-open) posts `REQUEST_CHANGES`, notifies Slack, and fails the review job.
-- An infrastructure error (Claude/API error, timeout after `review_timeout_minutes`, unusable reviewer output) does not fail the job: the bot posts a `COMMENT` saying the review could not run, never `APPROVE` or `REQUEST_CHANGES`, and the check stays green. Only blocking findings fail the job, plus a missing `claude_oauth_token` or missing PR commits in the checkout (config errors: use `fetch-depth: 0`) or a failure gathering PR context.
+- An infrastructure error (Claude/API error, timeout after `review_timeout_minutes`, unusable reviewer output) does not fail the job: the bot posts a `COMMENT` saying the review could not run, never `APPROVE` or `REQUEST_CHANGES`, and the check stays green. Only blocking findings fail the job, plus a missing `claude_oauth_token` or missing PR commits in the checkout (config errors: use `fetch-depth: 0`), a missing trusted rules/agent/skill file, or a failure gathering PR context. A brief failure only warns.
 - `.github/workflows/action-tests.yml` tests the verdicts end to end; add one label at a time on a throwaway PR (each posts real reviews): `test:infra-error` (invalid token, green plus notice), `test:verdict-clean` (fake reviewer, `COMMENT`), `test:verdict-blocking` (fake reviewer, `REQUEST_CHANGES`, job red).
 - Every finding is anchored to `file:line` and states the problem and the fix.
 - Each run posts a NEW delta-aware review: findings carry a stable `id` and `status` (`new`/`open`), the reviewer returns a top-level `resolved` array, and the body shows the `Since <sha7>` delta. Only `new` findings get inline comments.
@@ -94,7 +94,7 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | `slack_webhook_url` | `""` | Slack webhook for blocking-finding notifications. |
 | `github_token` | `${{ github.token }}` | Token for GitHub API calls (thread checks, posting the review). |
 | `claude_code_version` | `"2.1.270"` | Version of `@anthropic-ai/claude-code` to install. |
-| `review_timeout_minutes` | `"60"` | Minutes before the review's `claude -p` call is stopped and treated as an infra error. |
+| `review_timeout_minutes` | `"60"` | Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error. |
 
 Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `base_branch` (default `main`).
 

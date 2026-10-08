@@ -40,7 +40,7 @@ inputs:
     required: false
     default: "2.1.270"
   review_timeout_minutes:
-    description: "Minutes before the review's `claude -p` call is stopped and treated as an infra error."
+    description: "Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error."
     required: false
     default: '60'
 
@@ -242,7 +242,7 @@ runs:
       with:
         node-version: '22'
 
-    # Install/verify/load are network or npm infra: a failure here makes the review step
+    # Install/verify are network or npm infra: a failure here makes the review step
     # fail, which posts the could-not-run notice and keeps the check green.
     - name: Install Claude Code
       continue-on-error: true
@@ -287,8 +287,9 @@ runs:
     # review can run with --setting-sources user. They ship with the action at
     # github.action_path, never from the PR-controlled working tree. See the trust
     # explanation on the "Run automated review" step below.
+    # No continue-on-error: a missing trusted rules/agent/skill file is a config error and
+    # stays red, otherwise the review could run without rules and post a clean COMMENT.
     - name: Load trusted rules, agent, and skills from the action
-      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
@@ -1380,10 +1381,12 @@ runs:
 
     - name: Report that the review could not run
       # Best-effort: the notice is a COMMENT, never APPROVE or REQUEST_CHANGES, and this
-      # step never exits non-zero. Runs whenever no review was posted: the review step
-      # failed, or an earlier setup step failed and the review step was skipped.
+      # step never exits non-zero. Runs only when the review step ran and failed: a skipped
+      # review step (failed checkout check, empty token, failed context or Node setup) means a
+      # red config error, where a "this check passes" notice would be false. An Install/Verify
+      # failure still lands here because the review step then runs and fails.
       # Not posted when review_failed is set: a blocking run whose POST failed still fails the job.
-      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' && steps.checkout-check.outcome != 'failure' }}
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'failure' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1393,6 +1396,12 @@ runs:
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         echo "::warning::The automated review could not run (infrastructure error). This check passes so it does not block the merge."
+        # Dedupe: a re-run on the same head must not stack notices. Lookup failure just posts.
+        existing="$(gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" 2>/dev/null | jq -s 'add // []' 2>/dev/null || true)"
+        if [ -n "$existing" ] && jq -e --arg sha "$PR_HEAD_SHA" 'any(.[]; .commit_id == $sha and ((.body // "") | contains("<!-- review-infra-error -->")))' <<< "$existing" > /dev/null 2>&1; then
+          echo "A review-could-not-run comment already exists for $PR_HEAD_SHA; not posting another."
+          exit 0
+        fi
         body="$(jq -n --arg sha "$PR_HEAD_SHA" --arg url "$RUN_URL" '{
           event: "COMMENT",
           commit_id: $sha,
