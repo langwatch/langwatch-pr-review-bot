@@ -154,8 +154,10 @@ runs:
         # timeline ReviewDismissedEvent actor. Only a non-self actor counts (self = US-3).
         #
         # Fire ONCE per dismissal: US-5 applies only when the DISMISSED review is the
-        # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED, ignoring
-        # COMMENTED). Once the bot answers the dismissal with a new (approving) review,
+        # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED/COMMENTED).
+        # A signed COMMENT is the bot's clean verdict; unsigned COMMENTED reviews from
+        # thread replies are excluded by the signature check. Once the bot answers the
+        # dismissal with a new (clean) review,
         # that review becomes the latest verdict, so findings raised on later pushes block
         # normally and a stale dismissal can never auto-accept future findings.
         dismissed_by_human=false
@@ -165,7 +167,7 @@ runs:
           latest_verdict="$(jq -c --arg self "$self_norm" '[.[]
             | select(((((.user.login // "") | sub("\\[bot\\]$";"")) == $self))
                      and ((.body // "") | startswith("**@LangWatchReviewBot**"))
-                     and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED")))]
+                     and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED") or (.state == "COMMENTED")))]
             | sort_by(.submitted_at) | last // {}' all-reviews.json)"
           latest_state="$(jq -r '.state // ""' <<< "$latest_verdict")"
           latest_id="$(jq -r '.id // empty' <<< "$latest_verdict")"
@@ -177,7 +179,7 @@ runs:
             actor="$(jq -r '.actor.login // ""' <<< "$dismiss_event")"
             prev_state="$(jq -r '.previousReviewState // ""' <<< "$dismiss_event")"
             # Only a dismissed CHANGES_REQUESTED review accepts findings; dismissing the
-            # bot's own APPROVE (previousReviewState APPROVED) must not, and a self
+            # bot's own legacy APPROVE (previousReviewState APPROVED) must not, and a self
             # dismissal (US-3 supersession) is excluded by the actor check.
             if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" && "$prev_state" == "CHANGES_REQUESTED" ]]; then
               dismissed_by_human=true
@@ -1005,12 +1007,14 @@ runs:
         fi
 
         # REQUEST_CHANGES when any finding is blocking (new or still-open); otherwise
-        # APPROVE. A run whose only blocking findings are still-open (no new ones)
+        # COMMENT, never APPROVE: the bot is a required check, not an approval — the job
+        # result is the gate, and an APPROVE alone would satisfy a 1-approval branch rule
+        # with no human review. A run whose only blocking findings are still-open (no new ones)
         # posts a short body with no inline comments — the "still blocked" signal.
         if [[ "$blocking" -gt 0 ]]; then
           event='REQUEST_CHANGES'
         else
-          event='APPROVE'
+          event='COMMENT'
         fi
 
         # Inline comments are posted ONLY for status=="new" findings anchored to a diff
@@ -1211,15 +1215,15 @@ runs:
           done < <(jq -c '.[]' accepted.json)
         fi
 
-        # US-3 dismiss: when THIS review approves, dismiss the bot's own earlier
+        # US-3 dismiss: when THIS review is clean (COMMENT), dismiss the bot's own earlier
         # changes-requested reviews so the merge status matches the current verdict.
-        # Runs regardless of has_prev — the first approving review can still supersede an
+        # Runs regardless of has_prev — the first clean review can still supersede an
         # earlier changes-requested one. A review is the bot's OWN by the shared rule: its
         # author login == self_login AND its body begins with the **@LangWatchReviewBot**
         # signature — never login-only (a human review under a shared PAT login without the
         # signature is left alone) and never body-only (a human quoting the signature is
         # left alone). Never the review just posted; nothing dismissed on REQUEST_CHANGES.
-        if [[ "$event" == "APPROVE" ]]; then
+        if [[ "$event" == "COMMENT" ]]; then
           posted_review_id="$(jq -r '.id // empty' review-response.json)"
           if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
             jq -s 'add // []' all-reviews-raw.json > all-reviews.json

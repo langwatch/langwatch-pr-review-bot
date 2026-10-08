@@ -29,6 +29,7 @@ Feature: Automated PR review
     Given all prerequisite checks are green
     When the PR reviewer finds only non-blocking findings, or none at all
     Then any new findings are reported as inline review comments
+    And the review is posted as a "comment" review, never an approval
     And the pull request is not marked "changes requested"
     And the PR reviewer status check passes
     And each finding carries a priority and states whether it is blocking
@@ -108,12 +109,12 @@ Feature: Automated PR review
 
   Scenario: A human review starting with the bot signature is never dismissed
     Given a human-authored changes-requested review whose body begins with the bot signature
-    When the new review approves the pull request
+    When the new review is clean
     Then that human review is not dismissed
 
   Scenario: A clean re-review dismisses the bot's prior changes-requested reviews
     Given the bot posted an earlier "changes requested" review on this pull request
-    When the new review approves the pull request
+    When the new review is clean
     Then each earlier changes-requested review by the bot is dismissed as superseded
     And the review just posted is not dismissed
     And no human or other-bot review is dismissed
@@ -162,11 +163,11 @@ Feature: Automated PR review
     And each such thread is resolved with an "Accepted: dismissed by <actor>" reply
     And the review body counts them under "accepted" in the delta line
 
-  Scenario: A dismissed review with no new findings yields an approving review
+  Scenario: A dismissed review with no new findings yields a clean review
     Given the bot's previous changes-requested review was dismissed by a human
     And the fresh review finds no new blocking problems
     When the bot reviews the next push
-    Then the review is an approval
+    Then the review is a clean comment review
     And the review job exits zero
 
   Scenario: New findings after a dismissal still block
@@ -177,13 +178,19 @@ Feature: Automated PR review
     And the dismissed findings are still reported as accepted
 
   Scenario: A dismissal is honored once and does not auto-accept later findings
-    Given a human dismissed the bot's changes-requested review and the bot then approved
+    Given a human dismissed the bot's changes-requested review and the bot then posted a clean review
     When a later push introduces a new blocking problem
     Then the new finding blocks the review
     And it is not auto-accepted on the basis of the earlier dismissal
 
-  Scenario: Dismissing the bot's approving review does not accept its findings
-    Given the bot's most recent review is an approval that a human then dismissed
+  Scenario: A later clean comment review is the bot's latest verdict after a dismissal
+    Given a human dismissed the bot's changes-requested review
+    And the bot then posted a clean comment review
+    When a later push introduces a new blocking problem
+    Then the new finding blocks the review
+
+  Scenario: Dismissing a legacy approving review by the bot does not accept its findings
+    Given the bot's most recent review is a legacy approval that a human then dismissed
     When the bot reviews the next push
     Then its findings are not marked accepted on the basis of that dismissal
     And any still-open finding stays open
