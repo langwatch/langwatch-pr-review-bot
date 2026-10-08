@@ -42,7 +42,21 @@ Feature: Automated PR review
   Scenario: Reviewer output cannot be used
     Given all prerequisite checks are green
     When the PR reviewer fails to complete or returns findings in an unusable shape
-    Then the run fails with a clear error
+    Then the bot posts a "comment" review saying the review could not run
+    And the PR reviewer status check passes
+
+  Scenario: An infrastructure error does not block the merge
+    Given the reviewer call fails, times out, or returns unusable output
+    When the pipeline runs
+    Then the bot posts a "comment" review saying the review could not run
+    And it posts no approval and no "changes requested" review
+    And the PR reviewer status check passes
+
+  Scenario: An infrastructure notice is not treated as a verdict
+    Given a human dismissed the bot's changes-requested review
+    And the bot later posted a review-could-not-run notice
+    When the bot reviews the next push
+    Then the dismissed findings are still treated as accepted
 
   Scenario: A reviewer-opened thread with no human reply does not block the next review
     Given an unresolved review thread opened by the automated reviewer with no human reply

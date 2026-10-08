@@ -39,6 +39,10 @@ inputs:
     description: 'Version of @anthropic-ai/claude-code to install.'
     required: false
     default: "2.1.270"
+  review_timeout_minutes:
+    description: "Minutes before the review's `claude -p` call is stopped and treated as an infra error."
+    required: false
+    default: '60'
 
 runs:
   using: composite
@@ -164,9 +168,11 @@ runs:
         dismiss_actor=""
         if gh api "/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
           jq -s 'add // []' all-reviews-raw.json > all-reviews.json
+          # An infra-error notice is not a verdict: it must not hide a human dismissal.
           latest_verdict="$(jq -c --arg self "$self_norm" '[.[]
             | select(((((.user.login // "") | sub("\\[bot\\]$";"")) == $self))
                      and ((.body // "") | startswith("**@LangWatchReviewBot**"))
+                     and (((.body // "") | contains("<!-- review-infra-error -->")) | not)
                      and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED") or (.state == "COMMENTED")))]
             | sort_by(.submitted_at) | last // {}' all-reviews.json)"
           latest_state="$(jq -r '.state // ""' <<< "$latest_verdict")"
@@ -300,9 +306,15 @@ runs:
 
     - name: Run automated review
       id: review
+      # An infra error (Claude/API failure, timeout, unusable output) must never block
+      # the merge: only blocking findings fail the job, via review_failed and the final
+      # step. Outputs written to $GITHUB_OUTPUT before a failure are kept, so a blocking
+      # run that later crashes still fails the job.
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         GH_TOKEN: ${{ inputs.github_token }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
         # Secret-bearing telemetry header, set per step so it is never echoed to $GITHUB_ENV.
@@ -845,7 +857,7 @@ runs:
         fi
 
         rc=0
-        claude -p "$review_prompt" \
+        timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "$review_prompt" \
           --add-dir "$ACTION_PATH" \
           "${resume_args[@]}" \
           --agent pr-reviewer \
@@ -855,7 +867,7 @@ runs:
           < /dev/null > claude-review.json 2> claude-stderr.txt || rc=$?
 
         if [[ "$rc" -ne 0 ]]; then
-          echo "::error::claude -p exited with code $rc"
+          echo "::error::claude -p exited with code $rc (124 = timed out)"
           echo "::group::claude-stderr.txt"; cat claude-stderr.txt; echo "::endgroup::"
           echo "::group::claude-review.json"; cat claude-review.json; echo "::endgroup::"
           echo "::group::claude json summary"; jq '{type,subtype,is_error,num_turns,duration_ms,total_cost_usd,result: (.result|tostring|.[0:500])}' claude-review.json 2>/dev/null || true; echo "::endgroup::"
@@ -1099,8 +1111,10 @@ runs:
       # Its own step (its own set +e scope) so a best-effort API failure here can never
       # abort the review or flip the job red. always() so it still runs after a review
       # that requested changes; guarded on the same skip gate and on the review having
-      # actually been posted (review-response.json present).
-      if: ${{ always() && steps.context.outputs.skip != 'true' }}
+      # actually been posted (review-response.json present). It needs the review's
+      # files, so it is skipped when the review step crashed.
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
+      continue-on-error: true
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1249,7 +1263,9 @@ runs:
         echo "Self-cleaning complete."
 
     - name: Generate human review brief
-      if: ${{ steps.context.outputs.skip != 'true' }}
+      # A brief failure is infra: it must not fail the required check.
+      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
+      continue-on-error: true
       shell: bash
       env:
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
@@ -1344,11 +1360,35 @@ runs:
           cat pr-review-brief.md
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Report that the review could not run
+      # Best-effort: the notice is a COMMENT, never APPROVE or REQUEST_CHANGES, and this
+      # step never exits non-zero. Skipped when a blocking review set review_failed (that
+      # run already posted its review).
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'failure' && steps.review.outputs.review_failed != 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        echo "::warning::The automated review could not run (infrastructure error). This check passes so it does not block the merge."
+        body="$(jq -n --arg sha "$PR_HEAD_SHA" --arg url "$RUN_URL" '{
+          event: "COMMENT",
+          commit_id: $sha,
+          body: ("**@LangWatchReviewBot** The automated review could not run (infrastructure error: Claude/API failure, timeout, or unusable reviewer output). This check passes so it does not block the merge. A human must review this PR. Run: " + $url + "\n\n<!-- review-infra-error -->")
+        }')"
+        if ! gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --input - <<< "$body" > /dev/null; then
+          echo "::warning::Could not post the review-could-not-run comment."
+        fi
+        exit 0
+
     # Save the session directory (review + brief conversation) under the immutable
-    # run-scoped key so the next run for this PR restores and resumes it. Runs even
-    # when blocking findings will fail the job, so memory still persists.
+    # run-scoped key so the next run for this PR restores and resumes it. A blocking
+    # review step still succeeds, so those runs save; a crashed run never persists.
     - name: Save Claude session
-      if: ${{ always() && steps.context.outputs.skip != 'true' }}
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'success' }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.claude/projects
