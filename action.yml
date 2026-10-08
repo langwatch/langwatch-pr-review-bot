@@ -39,6 +39,10 @@ inputs:
     description: 'Version of @anthropic-ai/claude-code to install.'
     required: false
     default: "2.1.270"
+  review_timeout_minutes:
+    description: "Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error."
+    required: false
+    default: '60'
 
 runs:
   using: composite
@@ -154,18 +158,23 @@ runs:
         # timeline ReviewDismissedEvent actor. Only a non-self actor counts (self = US-3).
         #
         # Fire ONCE per dismissal: US-5 applies only when the DISMISSED review is the
-        # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED, ignoring
-        # COMMENTED). Once the bot answers the dismissal with a new (approving) review,
+        # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED/COMMENTED).
+        # A signed COMMENT is the bot's clean verdict. The only signed COMMENTED reviews
+        # the bot posts are that verdict and the infra notice, and the notice is excluded
+        # by its marker. Once the bot answers the
+        # dismissal with a new (clean) review,
         # that review becomes the latest verdict, so findings raised on later pushes block
         # normally and a stale dismissal can never auto-accept future findings.
         dismissed_by_human=false
         dismiss_actor=""
         if gh api "/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
           jq -s 'add // []' all-reviews-raw.json > all-reviews.json
+          # An infra-error notice is not a verdict: it must not hide a human dismissal.
           latest_verdict="$(jq -c --arg self "$self_norm" '[.[]
             | select(((((.user.login // "") | sub("\\[bot\\]$";"")) == $self))
                      and ((.body // "") | startswith("**@LangWatchReviewBot**"))
-                     and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED")))]
+                     and (((.body // "") | contains("<!-- review-infra-error -->")) | not)
+                     and ((.state == "APPROVED") or (.state == "CHANGES_REQUESTED") or (.state == "DISMISSED") or (.state == "COMMENTED")))]
             | sort_by(.submitted_at) | last // {}' all-reviews.json)"
           latest_state="$(jq -r '.state // ""' <<< "$latest_verdict")"
           latest_id="$(jq -r '.id // empty' <<< "$latest_verdict")"
@@ -177,7 +186,7 @@ runs:
             actor="$(jq -r '.actor.login // ""' <<< "$dismiss_event")"
             prev_state="$(jq -r '.previousReviewState // ""' <<< "$dismiss_event")"
             # Only a dismissed CHANGES_REQUESTED review accepts findings; dismissing the
-            # bot's own APPROVE (previousReviewState APPROVED) must not, and a self
+            # bot's own legacy APPROVE (previousReviewState APPROVED) must not, and a self
             # dismissal (US-3 supersession) is excluded by the actor check.
             if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" && "$prev_state" == "CHANGES_REQUESTED" ]]; then
               dismissed_by_human=true
@@ -228,12 +237,16 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Set up Node.js
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
         node-version: '22'
 
+    # Node setup, install and verify are network or npm infra: a failure here makes the review step
+    # fail, which posts the could-not-run notice and keeps the check green.
     - name: Install Claude Code
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
@@ -241,6 +254,7 @@ runs:
       run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
     - name: Verify Claude Code
+      continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       run: claude --version
@@ -274,6 +288,8 @@ runs:
     # review can run with --setting-sources user. They ship with the action at
     # github.action_path, never from the PR-controlled working tree. See the trust
     # explanation on the "Run automated review" step below.
+    # No continue-on-error: a missing trusted rules/agent/skill file is a config error and
+    # stays red, otherwise the review could run without rules and post a clean COMMENT.
     - name: Load trusted rules, agent, and skills from the action
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
@@ -296,11 +312,43 @@ runs:
         test -f "$HOME/.claude/skills/pr-brief/SKILL.md"
         test -f "$HOME/.claude/skills/pr-brief/TEMPLATE.md"
 
-    - name: Run automated review
-      id: review
+    - name: Check caller setup
+      id: checkout-check
+      # A caller setup error (shallow or wrong checkout, or an invalid review_timeout_minutes),
+      # not an infra error: its own step without continue-on-error so it stays red, and the
+      # review step is skipped.
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
+      run: |
+        # actions/checkout with fetch-depth: 0 already has full history, including the
+        # base sha object, so no extra fetch is needed before the three-dot diff.
+        if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
+          exit 1
+        fi
+
+        # A non-numeric timeout would make `timeout` exit 125 inside the review step, which reads
+        # as an infra error and turns the check green forever; reject it here as a config error.
+        if [[ ! "$REVIEW_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::review_timeout_minutes must be a positive whole number of minutes, got '${REVIEW_TIMEOUT_MINUTES}'."
+          exit 1
+        fi
+
+    - name: Run automated review
+      id: review
+      # An infra error (Claude/API failure, timeout, unusable output) must never block
+      # the merge: only blocking findings fail the job, via review_failed and the final
+      # step. review_failed is written before the POST and review_posted right after it,
+      # so a crash after posting never flips a blocking run green or adds an infra notice.
+      continue-on-error: true
+      if: ${{ steps.context.outputs.skip != 'true' }}
+      shell: bash
+      env:
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         GH_TOKEN: ${{ inputs.github_token }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
         # Secret-bearing telemetry header, set per step so it is never echoed to $GITHUB_ENV.
@@ -319,12 +367,6 @@ runs:
       run: |
         set -euo pipefail
 
-        # actions/checkout with fetch-depth: 0 already has full history, including the
-        # base sha object, so no extra fetch is needed before the three-dot diff.
-        if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
-          echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
-          exit 1
-        fi
         # Elide files marked `linguist-generated=true` in the .gitattributes ON THE
         # BASE BRANCH before the diff bundle is built. Generated blobs (prisma
         # manifests, large fixtures) can be tens of thousands of lines and would
@@ -843,7 +885,7 @@ runs:
         fi
 
         rc=0
-        claude -p "$review_prompt" \
+        timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "$review_prompt" \
           --add-dir "$ACTION_PATH" \
           "${resume_args[@]}" \
           --agent pr-reviewer \
@@ -853,7 +895,7 @@ runs:
           < /dev/null > claude-review.json 2> claude-stderr.txt || rc=$?
 
         if [[ "$rc" -ne 0 ]]; then
-          echo "::error::claude -p exited with code $rc"
+          echo "::error::claude -p exited with code $rc (124 = timed out)"
           echo "::group::claude-stderr.txt"; cat claude-stderr.txt; echo "::endgroup::"
           echo "::group::claude-review.json"; cat claude-review.json; echo "::endgroup::"
           echo "::group::claude json summary"; jq '{type,subtype,is_error,num_turns,duration_ms,total_cost_usd,result: (.result|tostring|.[0:500])}' claude-review.json 2>/dev/null || true; echo "::endgroup::"
@@ -1005,12 +1047,21 @@ runs:
         fi
 
         # REQUEST_CHANGES when any finding is blocking (new or still-open); otherwise
-        # APPROVE. A run whose only blocking findings are still-open (no new ones)
+        # COMMENT, never APPROVE: the bot is a required check, not an approval — the job
+        # result is the gate, and an APPROVE alone would satisfy a 1-approval branch rule
+        # with no human review. A run whose only blocking findings are still-open (no new ones)
         # posts a short body with no inline comments — the "still blocked" signal.
         if [[ "$blocking" -gt 0 ]]; then
           event='REQUEST_CHANGES'
         else
-          event='APPROVE'
+          event='COMMENT'
+        fi
+
+        # Written before the POST so any later crash still fails a blocking run.
+        if [[ "$blocking" -gt 0 ]]; then
+          echo 'review_failed=true' >> "$GITHUB_OUTPUT"
+        else
+          echo 'review_failed=false' >> "$GITHUB_OUTPUT"
         fi
 
         # Inline comments are posted ONLY for status=="new" findings anchored to a diff
@@ -1031,6 +1082,7 @@ runs:
           echo "::group::review-payload.json"; cat review-payload.json; echo "::endgroup::"
           exit 1
         fi
+        echo 'review_posted=true' >> "$GITHUB_OUTPUT"
 
         # Fetch the just-posted review's inline comments and map each finding id to its
         # permanent html_url, matched on the "<!-- id:<slug> -->" marker embedded in the
@@ -1060,7 +1112,7 @@ runs:
               -X POST \
               -H 'Content-Type: application/json' \
               --data @slack-payload.json \
-              "$SLACK_WEBHOOK_URL"
+              "$SLACK_WEBHOOK_URL" || echo "::warning::Slack notification failed."
           elif [[ "${SLACK_NOTIFY}" != "true" ]]; then
             echo "slack_notify is disabled; skipping Slack notification."
           else
@@ -1068,11 +1120,6 @@ runs:
           fi
         fi
 
-        if [[ "$blocking" -gt 0 ]]; then
-          echo 'review_failed=true' >> "$GITHUB_OUTPUT"
-        else
-          echo 'review_failed=false' >> "$GITHUB_OUTPUT"
-        fi
         echo "generated_elided=${generated_count}" >> "$GITHUB_OUTPUT"
 
         {
@@ -1093,10 +1140,9 @@ runs:
 
     - name: Self-cleaning
       # Its own step (its own set +e scope) so a best-effort API failure here can never
-      # abort the review or flip the job red. always() so it still runs after a review
-      # that requested changes; guarded on the same skip gate and on the review having
-      # actually been posted (review-response.json present).
-      if: ${{ always() && steps.context.outputs.skip != 'true' }}
+      # abort the review or flip the job red. Gated on the review having been posted
+      # (review_posted); it needs the review's files, so it is skipped otherwise.
+      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1211,15 +1257,15 @@ runs:
           done < <(jq -c '.[]' accepted.json)
         fi
 
-        # US-3 dismiss: when THIS review approves, dismiss the bot's own earlier
+        # US-3 dismiss: when THIS review is clean (COMMENT), dismiss the bot's own earlier
         # changes-requested reviews so the merge status matches the current verdict.
-        # Runs regardless of has_prev — the first approving review can still supersede an
+        # Runs regardless of has_prev — the first clean review can still supersede an
         # earlier changes-requested one. A review is the bot's OWN by the shared rule: its
         # author login == self_login AND its body begins with the **@LangWatchReviewBot**
         # signature — never login-only (a human review under a shared PAT login without the
         # signature is left alone) and never body-only (a human quoting the signature is
         # left alone). Never the review just posted; nothing dismissed on REQUEST_CHANGES.
-        if [[ "$event" == "APPROVE" ]]; then
+        if [[ "$event" == "COMMENT" ]]; then
           posted_review_id="$(jq -r '.id // empty' review-response.json)"
           if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
             jq -s 'add // []' all-reviews-raw.json > all-reviews.json
@@ -1245,9 +1291,12 @@ runs:
         echo "Self-cleaning complete."
 
     - name: Generate human review brief
-      if: ${{ steps.context.outputs.skip != 'true' }}
+      # A brief failure is infra: it must not fail the required check.
+      if: ${{ steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
+      continue-on-error: true
       shell: bash
       env:
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
         OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${{ inputs.langwatch_ingest_key }}"
         ACTION_PATH: ${{ github.action_path }}
@@ -1285,7 +1334,7 @@ runs:
         template_path="$ACTION_PATH/.claude/skills/pr-brief/TEMPLATE.md"
 
         rc=0
-        claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. The pull request title, description, and review result are in the file ${brief_input_file}; read that file for the PR context. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
+        timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. The pull request title, description, and review result are in the file ${brief_input_file}; read that file for the PR context. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
           --add-dir "$ACTION_PATH" \
           --continue \
           --agent pr-reviewer \
@@ -1340,11 +1389,45 @@ runs:
           cat pr-review-brief.md
         } >> "$GITHUB_STEP_SUMMARY"
 
+    - name: Report that the review could not run
+      # Best-effort: the notice is a COMMENT, never APPROVE or REQUEST_CHANGES, and this
+      # step never exits non-zero. Runs only when the review step ran and failed: a skipped
+      # review step (failed caller-setup check, empty token, failed context, missing trusted
+      # file) means a red config error, where a "this check passes" notice would be false. A
+      # Node setup or Install/Verify failure still lands here because the review step then
+      # runs and fails.
+      # Not posted when review_failed is set: a blocking run whose POST failed still fails the job.
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outcome == 'failure' && steps.review.outputs.review_posted != 'true' && steps.review.outputs.review_failed != 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        echo "::warning::The automated review could not run (infrastructure error). This check passes so it does not block the merge."
+        # Dedupe: a re-run on the same head must not stack notices. Lookup failure just posts.
+        existing="$(gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" 2>/dev/null | jq -s 'add // []' 2>/dev/null || true)"
+        if [ -n "$existing" ] && jq -e --arg sha "$PR_HEAD_SHA" 'any(.[]; .commit_id == $sha and ((.body // "") | contains("<!-- review-infra-error -->")))' <<< "$existing" > /dev/null 2>&1; then
+          echo "A review-could-not-run comment already exists for $PR_HEAD_SHA; not posting another."
+          exit 0
+        fi
+        body="$(jq -n --arg sha "$PR_HEAD_SHA" --arg url "$RUN_URL" '{
+          event: "COMMENT",
+          commit_id: $sha,
+          body: ("**@LangWatchReviewBot** The automated review could not run (infrastructure error: Claude/API failure, timeout, or unusable reviewer output). This check passes so it does not block the merge. A human must review this PR. Run: " + $url + "\n\n<!-- review-infra-error -->")
+        }')"
+        if ! gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --input - <<< "$body" > /dev/null; then
+          echo "::warning::Could not post the review-could-not-run comment."
+        fi
+        exit 0
+
     # Save the session directory (review + brief conversation) under the immutable
-    # run-scoped key so the next run for this PR restores and resumes it. Runs even
-    # when blocking findings will fail the job, so memory still persists.
+    # run-scoped key so the next run for this PR restores and resumes it. Saved only
+    # once a review was posted (review_posted), blocking or not; an unposted run never persists.
     - name: Save Claude session
-      if: ${{ always() && steps.context.outputs.skip != 'true' }}
+      if: ${{ always() && steps.context.outputs.skip != 'true' && steps.review.outputs.review_posted == 'true' }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.claude/projects
@@ -1352,12 +1435,16 @@ runs:
 
     - name: Upload human review brief
       if: ${{ always() && hashFiles('pr-review-brief.md') != '' }}
+      # The brief is already a PR comment and in the job summary; a failed artifact upload
+      # is infra and must not turn the required check red.
+      continue-on-error: true
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: pr-review-brief
         path: pr-review-brief.md
 
     - name: Fail when violations were found
-      if: ${{ steps.review.outputs.review_failed == 'true' }}
+      # always() so an earlier step failure can never skip the blocking verdict.
+      if: ${{ always() && steps.review.outputs.review_failed == 'true' }}
       shell: bash
       run: exit 1

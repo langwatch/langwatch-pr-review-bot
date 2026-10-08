@@ -29,6 +29,7 @@ Feature: Automated PR review
     Given all prerequisite checks are green
     When the PR reviewer finds only non-blocking findings, or none at all
     Then any new findings are reported as inline review comments
+    And the review is posted as a "comment" review, never an approval
     And the pull request is not marked "changes requested"
     And the PR reviewer status check passes
     And each finding carries a priority and states whether it is blocking
@@ -38,10 +39,30 @@ Feature: Automated PR review
     When the pipeline extracts the findings
     Then the findings are accepted
 
-  Scenario: Reviewer output cannot be used
-    Given all prerequisite checks are green
-    When the PR reviewer fails to complete or returns findings in an unusable shape
+  Scenario: An infrastructure error does not block the merge
+    Given the reviewer call fails, times out, or returns unusable output
+    When the pipeline runs
+    Then the bot posts a "comment" review saying the review could not run
+    And it posts no approval and no "changes requested" review
+    And the PR reviewer status check passes
+
+  Scenario: An install failure is an infrastructure error
+    Given installing or verifying Claude Code fails
+    When the pipeline runs
+    Then the bot posts a "comment" review saying the review could not run
+    And the PR reviewer status check passes
+
+  Scenario: A caller setup error stays red with no notice
+    Given the checkout lacks the PR commits, the Claude token is empty, a trusted rules, agent or skill file is missing, or review_timeout_minutes is not a positive whole number
+    When the pipeline runs
     Then the run fails with a clear error
+    And no review-could-not-run notice is posted
+
+  Scenario: An infrastructure notice is not treated as a verdict
+    Given a human dismissed the bot's changes-requested review
+    And the bot later posted a review-could-not-run notice
+    When the bot reviews the next push
+    Then the dismissed findings are still treated as accepted
 
   Scenario: A reviewer-opened thread with no human reply does not block the next review
     Given an unresolved review thread opened by the automated reviewer with no human reply
@@ -108,12 +129,12 @@ Feature: Automated PR review
 
   Scenario: A human review starting with the bot signature is never dismissed
     Given a human-authored changes-requested review whose body begins with the bot signature
-    When the new review approves the pull request
+    When the new review is clean
     Then that human review is not dismissed
 
   Scenario: A clean re-review dismisses the bot's prior changes-requested reviews
     Given the bot posted an earlier "changes requested" review on this pull request
-    When the new review approves the pull request
+    When the new review is clean
     Then each earlier changes-requested review by the bot is dismissed as superseded
     And the review just posted is not dismissed
     And no human or other-bot review is dismissed
@@ -162,11 +183,11 @@ Feature: Automated PR review
     And each such thread is resolved with an "Accepted: dismissed by <actor>" reply
     And the review body counts them under "accepted" in the delta line
 
-  Scenario: A dismissed review with no new findings yields an approving review
+  Scenario: A dismissed review with no new findings yields a clean review
     Given the bot's previous changes-requested review was dismissed by a human
     And the fresh review finds no new blocking problems
     When the bot reviews the next push
-    Then the review is an approval
+    Then the review is a clean comment review
     And the review job exits zero
 
   Scenario: New findings after a dismissal still block
@@ -177,13 +198,13 @@ Feature: Automated PR review
     And the dismissed findings are still reported as accepted
 
   Scenario: A dismissal is honored once and does not auto-accept later findings
-    Given a human dismissed the bot's changes-requested review and the bot then approved
+    Given a human dismissed the bot's changes-requested review and the bot then posted a clean review
     When a later push introduces a new blocking problem
     Then the new finding blocks the review
     And it is not auto-accepted on the basis of the earlier dismissal
 
-  Scenario: Dismissing the bot's approving review does not accept its findings
-    Given the bot's most recent review is an approval that a human then dismissed
+  Scenario: Dismissing a legacy approving review by the bot does not accept its findings
+    Given the bot's most recent review is a legacy approval that a human then dismissed
     When the bot reviews the next push
     Then its findings are not marked accepted on the basis of that dismissal
     And any still-open finding stays open
@@ -300,7 +321,7 @@ Feature: Automated PR review
     Given the action is installed in another repository
     When the review runs
     Then the reviewer reads the rules and brief template from the action's own directory
-    And a brief that does not follow the template fails the run
+    And a brief that does not follow the template is reported as a warning and does not fail the run
 
   Scenario: Review prompt stays small regardless of PR size
     Given a pull request whose diff exceeds the reviewer's stdin input limit

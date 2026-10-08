@@ -14,4 +14,4 @@ Feature: PR human review brief
     Given the pull request targets "main"
     And the automated PR review has completed
     When the PR brief workflow fails to complete
-    Then the run fails with a clear error
+    Then the failure is reported as a warning and does not fail the run
