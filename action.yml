@@ -312,20 +312,29 @@ runs:
         test -f "$HOME/.claude/skills/pr-brief/SKILL.md"
         test -f "$HOME/.claude/skills/pr-brief/TEMPLATE.md"
 
-    - name: Check the checkout has the PR commits
+    - name: Check caller setup
       id: checkout-check
-      # A caller setup error (shallow or wrong checkout), not an infra error: its own
-      # step without continue-on-error so it stays red, and the review step is skipped.
+      # A caller setup error (shallow or wrong checkout, or an invalid review_timeout_minutes),
+      # not an infra error: its own step without continue-on-error so it stays red, and the
+      # review step is skipped.
       if: ${{ steps.context.outputs.skip != 'true' }}
       shell: bash
       env:
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
       run: |
         # actions/checkout with fetch-depth: 0 already has full history, including the
         # base sha object, so no extra fetch is needed before the three-dot diff.
         if ! git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null || ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
           echo "::error::Base or head commit not present in the checkout. Run actions/checkout@v4 with ref set to the PR head sha (github.event.pull_request.head.sha) and fetch-depth: 0 before this action."
+          exit 1
+        fi
+
+        # A non-numeric timeout would make `timeout` exit 125 inside the review step, which reads
+        # as an infra error and turns the check green forever; reject it here as a config error.
+        if [[ ! "$REVIEW_TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error::review_timeout_minutes must be a positive whole number of minutes, got '${REVIEW_TIMEOUT_MINUTES}'."
           exit 1
         fi
 
@@ -1425,6 +1434,9 @@ runs:
 
     - name: Upload human review brief
       if: ${{ always() && hashFiles('pr-review-brief.md') != '' }}
+      # The brief is already a PR comment and in the job summary; a failed artifact upload
+      # is infra and must not turn the required check red.
+      continue-on-error: true
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: pr-review-brief
