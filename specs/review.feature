@@ -418,15 +418,16 @@ Feature: Automated PR review
   Scenario: The pull request has no linked issue
     Given the pull request has no linked issue
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    Then the review body carries the line "No linked issue: design decisions were not checked against acceptance criteria."
+    And no finding and no inline thread is posted about the missing issue
     And no per-decision finding is fabricated
 
   @ac-5
   Scenario: The linked issue has no acceptance criteria
     Given the pull request is linked to an issue that has no acceptance criteria
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
-    And no per-decision finding is fabricated
+    Then no per-decision finding is fabricated
+    And no finding is posted about the missing acceptance criteria
 
   @ac-6
   Scenario: A benign untraced choice is not flagged as unlicensed
@@ -477,7 +478,7 @@ Feature: Automated PR review
     When the action fetches linked issues
     Then a warning is logged naming the issue that could not be fetched
     And the review bundle carries no "<linked-issue>" section for that issue
-    And the review proceeds with the "no-linked-issue" note instead of failing the run
+    And the review proceeds with the "No linked issue" body line instead of failing the run
 
   @ac-13
   Scenario: Linked-issue text is XML-escaped inside the review fence
@@ -502,3 +503,172 @@ Feature: Automated PR review
     When the action extracts "license:" lines from the pull request body
     Then the "Decision:" lines and the "license:" line are collected into the "<licenses>" section
     And the prose sentence is not collected
+
+  # --- Review once, then on request ---
+
+  Scenario: Every-push mode keeps re-reviewing the whole pull request on each push
+    Given the action runs with rereview "every-push", the default
+    When a commit is pushed to the pull request
+    Then the PR reviewer runs a full review of the pull request
+
+  Scenario: On-request mode reviews a new pull request in full
+    Given the action runs with rereview "on-request"
+    When the pull request is opened, reopened, or marked ready for review
+    Then the PR reviewer runs a full review of the pull request
+
+  Scenario: On-request mode does not review a push
+    Given the action runs with rereview "on-request"
+    When a commit is pushed to the pull request
+    Then the PR reviewer does not run
+    And the bot posts no review, no comment, and no inline thread
+
+  Scenario: A push keeps the check red while the last review has open blocking findings
+    Given the action runs with rereview "on-request"
+    And the bot's most recent verdict review on the pull request requests changes and is not dismissed
+    When a commit is pushed to the pull request
+    Then the PR reviewer status check fails
+    And the run reports one error saying to fix the blocking findings in one push, then add the "review:again" label
+
+  Scenario: A push keeps the check green when the last review did not block
+    Given the action runs with rereview "on-request"
+    And the bot's most recent verdict review on the pull request is a comment, or was dismissed
+    When a commit is pushed to the pull request
+    Then the PR reviewer status check passes
+
+  Scenario: An unrelated label keeps the previous verdict
+    Given the action runs with rereview "on-request"
+    When a label other than "review:again" or "review:full" is added to the pull request
+    Then the PR reviewer does not run
+    And the PR reviewer status check carries the bot's most recent verdict
+
+  Scenario: The re-review label runs an incremental review and is removed
+    Given the action runs with rereview "on-request"
+    And the bot has reviewed the pull request before
+    When a person adds the "review:again" label
+    Then the PR reviewer runs an incremental review
+    And the "review:again" label is removed from the pull request afterwards
+
+  Scenario: The full-review label runs a full review and is removed
+    Given the action runs with rereview "on-request"
+    When a person adds the "review:full" label
+    Then the PR reviewer runs a full review of the pull request
+    And the "review:full" label is removed from the pull request afterwards
+
+  Scenario: An unknown rereview value is a setup error
+    Given the action runs with rereview set to a value other than "every-push" or "on-request"
+    When the pipeline runs
+    Then the run fails with a clear error before any review
+
+  # --- Incremental re-review ---
+
+  Scenario: An incremental review reports new findings only on lines changed since the last review
+    Given the bot's previous review was posted at commit A
+    And the pull request head is now commit B
+    When an incremental review runs
+    Then the reviewer is told that new findings may only be anchored on lines added between A and B
+    And a new finding anchored anywhere else is dropped
+    And the run log states how many new findings were dropped
+
+  Scenario: An incremental review still reconciles every previous finding
+    Given the bot's previous review reported findings
+    When an incremental review runs
+    Then each previous finding is still reported as open, resolved, or accepted against the whole pull request
+
+  Scenario: A new finding cannot pass as a previous one
+    Given an incremental review returns a finding marked open whose id the bot never reported before
+    When the action applies the incremental scope
+    Then that finding is treated as new and dropped unless it is on a changed line
+
+  Scenario: An incremental review survives a rebase
+    Given the pull request was rebased since the bot's previous review
+    When an incremental review runs
+    Then the changed lines are taken from the tree difference between the previous head and the new head
+
+  Scenario: An incremental review falls back to a full review without a previous head
+    Given the commit of the bot's previous review is not present in the checkout, or no previous review exists
+    When an incremental review is requested
+    Then the PR reviewer runs a full review instead
+
+  # --- Findings a tool already enforces ---
+
+  Scenario: A rule a linter enforces is never reported
+    Given the repository's lint or CI config enforces a rule, such as a maximum comment length
+    And the pull request breaks that rule
+    When the PR reviewer runs
+    Then no finding is reported for that rule
+
+  # --- Read-only code tooling ---
+
+  Scenario: The reviewer verifies claims with read-only code search
+    Given the reviewer wants to report that code is dead, untested, already provided by an existing tool, or breaks a caller
+    When the PR reviewer runs
+    Then it may run git diff, git log, git show, git blame, git grep, rg, and ast-grep pattern searches
+    And it drops the finding when those searches contradict it
+
+  Scenario: The reviewer can never run repository code or repository config
+    Given the pull request contains scripts, package manifests, or an ast-grep config file
+    When the reviewer tries to run a package manager, an interpreter, a linter, or a repository script
+    Then the command is refused
+    And ast-grep runs only with a trusted empty config, never one from the pull request
+
+  Scenario: The reviewer's commands cannot read files outside the workspace
+    Given a reviewer command names a path outside the workspace, or a symbolic link that points outside it
+    When the command runs
+    Then it is refused
+    And the commands run without the Claude token or the GitHub token in their environment
+
+  # --- PR title and description ---
+
+  Scenario: A finding about the PR description never blocks
+    Given the PR description no longer matches the code
+    When the PR reviewer reports it
+    Then the finding is non-blocking
+    And it is listed in the review body, not as an inline thread
+
+  Scenario: Editing the PR body does not trigger a review
+    Given the installed workflow does not trigger on "edited"
+    When the PR body is edited
+    Then the PR reviewer does not run
+    And the previous review stays valid
+
+  Scenario: A re-run sees the current title, body, and labels
+    Given the PR body was edited after the event that started the run, for example to add a missing section
+    When the workflow run is re-run
+    Then the action reads the title, body, and labels from the GitHub API at run time
+    And no finding is reported about the section that was already added
+    And the review label gate uses the labels the pull request carries now
+
+  Scenario: The event payload is the fallback when the API cannot be read
+    Given the GitHub API call for the pull request fails
+    When the pipeline runs
+    Then a warning is logged
+    And the title, body, and labels from the event payload are used
+
+  # --- Cleaning up after itself ---
+
+  Scenario: A new review collapses the bot's earlier review bodies
+    Given the bot has posted reviews on the pull request before
+    When a run posts a new review
+    Then each earlier review body of the bot is minimized as outdated
+    And the review just posted is not minimized
+    And reviews by humans or other bots are never minimized
+
+  Scenario: A finding with an open thread is never posted twice
+    Given the bot has an unresolved inline thread for a finding id
+    When a later review reports a finding with the same id
+    Then no second inline thread is posted
+    And the review body links the existing thread as still open
+
+  # --- Code suggestions ---
+
+  Scenario: A simple local fix is posted as a suggestion
+    Given a finding carries a suggestion whose line range is inside the diff and inside the file
+    When the review is posted
+    Then the inline comment carries a GitHub suggestion block with the replacement lines
+    And a multi-line suggestion anchors the comment on its whole line range
+
+  Scenario: An invalid suggestion is dropped and the finding is kept
+    Given a finding carries a suggestion whose range is outside the diff, outside the file, or does not contain the finding's line
+    When the review is posted
+    Then the suggestion is not posted
+    And the finding is still posted

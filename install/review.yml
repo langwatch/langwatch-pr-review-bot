@@ -5,7 +5,13 @@
 name: PR Review Bot
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # rereview: on-request (below) reviews a PR in full once, then again only when someone
+    # adds the review:again (incremental) or review:full label. `synchronize` is still
+    # needed: a push runs no model but keeps the check red while the last review blocks.
+    # `labeled` delivers the label request. Leave `edited` out: editing the PR body never
+    # needs a new review. For a full review on every push instead, drop `labeled` and the
+    # `rereview` input.
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
 permissions:
   # contents: write lets the default GITHUB_TOKEN resolve fixed findings' threads
   # (resolveReviewThread). Drop it to contents: read if you do not want thread resolution.
@@ -24,6 +30,7 @@ jobs:
       # Pin this to a reviewed commit SHA if your repository requires SHA-pinned actions (see README).
       - uses: langwatch/langwatch-pr-review-bot@main
         with:
+          rereview: on-request
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}

@@ -12,10 +12,18 @@ Every violation carries a priority and a blocking flag. Assign the priority from
 
 Only blocking findings (P0/P1) request changes and fail the review job. Non-blocking findings (P2) are still reported.
 
+## Never report what a tool enforces
+
+Do not report anything a linter, formatter, type checker, or CI check in the repository enforces: comment length, formatting, import order, unused code a linter flags, naming rules, or PR-body sections that a workflow checks. Before reporting a finding of that kind, look for the rule in the repository's lint and CI config (for example `.oxlintrc*`, `biome.json`, `eslint*`, `dev/docs/lint-rules.md`, `.github/workflows/*`). When a tool covers it, do not report it. This applies to every rule below.
+
+## PR title and description never block
+
+A finding about the PR title or description (the description no longer matches the code, a missing explanation, a stale claim) is always **P2, non-blocking**, and goes in the review body, never in an inline thread. Editing the PR body does not invalidate a review.
+
 Each rule below is tagged with its default priority. Subjective rules also carry a short **How to judge** (what to compare against, what evidence to cite, what does NOT count).
 
 ## Intent & Decisions
-- PR description clearly explains why the PR exists — **P1**
+- PR description clearly explains why the PR exists — **P2** (a description finding never blocks)
 - The stated problem is valid and sufficiently justified — **P1**
 - The proposed solution addresses the stated problem — **P0**
 - Key implementation decisions are reasonable — **P2**
@@ -25,7 +33,7 @@ Each rule below is tagged with its default priority. Subjective rules also carry
 - No unnecessary scope or invented requirements — **P1**
   - How to judge: compare the diff against the stated problem/AC. Cite the changed lines that serve no stated requirement. Refactors the author declared in the description do NOT count.
 - Every design decision is licensed — **P1 (blocking)**
-  - How to judge: a *design decision* is a diff choice that adds a constraint or capability nobody asked for — a new limit/cap/threshold, a config knob, an abstraction, a fallback path, a new dependency, a retry/timeout policy, or a schema change. Each such decision must trace to a scenario or acceptance criterion in a `<linked-issue>` section of the review bundle, or to a line in the `<licenses>` section. When a decision traces to none of them, emit a blocking finding whose `id` is `unlicensed-decision-<slug>`: quote the specific decision and state that no acceptance criterion in the linked issue covers it. A decision is *licensed* (do NOT flag it) when the PR body carries a matching line in one of exactly two forms — a line starting with `Decision:` that also contains a dash (`—`, `–`, `-`, or `--`) followed by `license:`; spacing around the dash is optional (e.g. `Decision: <X> — license: AC-<n>`), or a line starting with `license:` (e.g. `license: owner ratified <url>`); keywords are case-insensitive and a leading `-`/`*` list marker is allowed, but a line that merely mentions "license:" mid-sentence does not count — or when the owner already accepted an equivalent decision via a thread reply (the existing acceptance mechanism). Benign, untraced choices are NOT design decisions and are never flagged under this rule: naming, formatting, test structure, a private helper extraction, an early return. When the bundle has NO `<linked-issue>` section (the PR links no issue), do not flag any decision — emit exactly one non-blocking finding with `id` `no-linked-issue` stating that decision licenses cannot be checked without a linked issue; the same non-blocking note is used when the linked issue exists but carries no ACs or scenarios.
+  - How to judge: a *design decision* is a diff choice that adds a constraint or capability nobody asked for — a new limit/cap/threshold, a config knob, an abstraction, a fallback path, a new dependency, a retry/timeout policy, or a schema change. Each such decision must trace to a scenario or acceptance criterion in a `<linked-issue>` section of the review bundle, or to a line in the `<licenses>` section. When a decision traces to none of them, emit a blocking finding whose `id` is `unlicensed-decision-<slug>`: quote the specific decision and state that no acceptance criterion in the linked issue covers it. A decision is *licensed* (do NOT flag it) when the PR body carries a matching line in one of exactly two forms — a line starting with `Decision:` that also contains a dash (`—`, `–`, `-`, or `--`) followed by `license:`; spacing around the dash is optional (e.g. `Decision: <X> — license: AC-<n>`), or a line starting with `license:` (e.g. `license: owner ratified <url>`); keywords are case-insensitive and a leading `-`/`*` list marker is allowed, but a line that merely mentions "license:" mid-sentence does not count — or when the owner already accepted an equivalent decision via a thread reply (the existing acceptance mechanism). Benign, untraced choices are NOT design decisions and are never flagged under this rule: naming, formatting, test structure, a private helper extraction, an early return. When the bundle has NO `<linked-issue>` section (the PR links no issue), do not flag any decision and do not report the missing issue as a finding: the action adds one line to the review body instead. When the linked issue exists but carries no ACs or scenarios, do not flag any decision either.
   - Trust boundaries on the linked-issue fetch: only the issue body and comments from an `OWNER`/`MEMBER`/`COLLABORATOR` may contribute an AC/Gherkin section — a comment from any other account is never scanned for one, so an outside commenter cannot forge scope. A full issue URL naming a repo other than the PR's own is never fetched (the fetch uses the workflow token); it appears in the bundle as `<linked-issue-skipped repo="owner/name" number="N" reason="cross-repo"/>` and licenses cannot be checked against it.
 - Acceptance criteria (AC) are explicit — **P1**
 - PR satisfies all acceptance criteria — **P0**
@@ -37,9 +45,11 @@ Each rule below is tagged with its default priority. Subjective rules also carry
 - Real edge cases are handled — **P0**
   - How to judge: cite a concrete input or state that reaches the code and misbehaves. A hypothetical that cannot occur given the callers does NOT count.
 - No unintended breaking changes — **P0**
+  - How to judge: find the affected caller with `git grep` / `rg` / `ast-grep` and cite the incompatible call.
 
 ## Code Quality
 - No dead code or cruft — **P2**
+  - How to judge: prove there is no caller or reference with `git grep` / `rg` / `ast-grep` before reporting. Unused code a linter already flags does NOT count.
 - No redundant code — **P2**
 - No unnecessary complexity — **P2**
   - How to judge: cite the simpler form that produces identical behavior. Compare against existing code in the same area. "I find it complex" without a simpler equivalent does NOT count.
@@ -54,7 +64,7 @@ Each rule below is tagged with its default priority. Subjective rules also carry
 - No hidden defaults — **P2**
   - How to judge: cite the default value applied silently where the caller would reasonably expect to set it.
 - Existing tools/services are reused — **P1**
-  - How to judge: name the existing tool/service/abstraction in the trusted repository the change should have used, with its path. If none exists, this does NOT apply.
+  - How to judge: name the existing tool/service/abstraction in the trusted repository the change should have used, with its path, found with `git grep` / `rg` / `ast-grep`. If the search does not find it, this does NOT apply.
 - Nothing reinvented that already has an off-the-shelf solution — **P1**
   - How to judge: name the specific off-the-shelf solution already available in the repo or its dependencies. A solution that is not present does NOT count.
 - Naming and structure are clear and consistent — **P2**
@@ -82,7 +92,7 @@ Each rule below is tagged with its default priority. Subjective rules also carry
 
 ## Testing
 - All logic is tested — **P1**
-  - How to judge: cite the added/changed behavior with no covering test. Trivial pass-throughs do NOT count.
+  - How to judge: cite the added/changed behavior with no covering test, after searching the test files for it. Trivial pass-throughs do NOT count.
 - Tests test behavior, not implementation — **P2**
   - How to judge: cite the test asserting on internal calls/structure rather than observable behavior.
 - No mocks — **P1**
