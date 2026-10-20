@@ -5,6 +5,8 @@ name: Action tests
 #   test:infra-error     invalid Claude token: job green, COMMENT notice, no verdict review.
 #   test:verdict-clean   fake reviewer, no findings: job green, COMMENT, never APPROVE.
 #   test:verdict-blocking fake reviewer, one blocking finding: job red, REQUEST_CHANGES.
+#   test:hold            rereview on-request with an unrelated label: no review posted, and
+#                        the job is red exactly when the bot's latest verdict requests changes.
 # Add the labels ONE AT A TIME on a throwaway PR: each posts real reviews on it.
 # review.yml does not trigger on `labeled`, so its runs cannot race the assertions.
 on:
@@ -148,3 +150,51 @@ jobs:
           echo "action outcome: $ACTION_OUTCOME; signed CHANGES_REQUESTED: $changes"
           [[ "$ACTION_OUTCOME" == "failure" ]] || { echo "::error::The action step should fail on a blocking finding."; exit 1; }
           [[ "$changes" -ge 1 ]] || { echo "::error::No signed CHANGES_REQUESTED review on the head commit."; exit 1; }
+
+  hold:
+    if: github.event.label.name == 'test:hold'
+    runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_PREFIX: ${{ github.workspace }}/../npm-global-off-path
+      # Never called on the hold path; present so a wrongly started review cannot reach the API.
+      FAKE_REVIEW_JSON: '{"findings":[],"resolved":[],"accepted":[]}'
+    steps:
+      - name: Record start time
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Install fake claude
+        uses: ./.github/actions/fake-claude
+
+      - uses: ./
+        id: action
+        continue-on-error: true
+        with:
+          claude_oauth_token: 'dummy-token-fake-claude'
+          review_label: 'test:hold'
+          rereview: 'on-request'
+          slack_notify: 'false'
+
+      - name: Assert a hold posts nothing and restates the last verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          START_AT: ${{ steps.start.outputs.at }}
+          ACTION_OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
+          posted="$(jq --arg start "$START_AT" '[.[] | select(.submitted_at >= $start and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews")"
+          latest="$(jq -r '[.[] | select(((.body // "") | startswith("**@LangWatchReviewBot**")) and (((.body // "") | contains("<!-- review-infra-error -->")) | not) and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED" or .state == "COMMENTED"))] | sort_by(.submitted_at) | last | .state // ""' <<< "$reviews")"
+          echo "action outcome: $ACTION_OUTCOME; bot reviews posted this run: $posted; latest verdict: ${latest:-none}"
+          [[ "$posted" -eq 0 ]] || { echo "::error::A hold run posted a review."; exit 1; }
+          if [[ "$latest" == "CHANGES_REQUESTED" ]]; then
+            [[ "$ACTION_OUTCOME" == "failure" ]] || { echo "::error::The last verdict requests changes, so the hold must fail."; exit 1; }
+          else
+            [[ "$ACTION_OUTCOME" == "success" ]] || { echo "::error::The last verdict does not block, so the hold must pass."; exit 1; }
+          fi

@@ -30,8 +30,11 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
 - A review with no blocking finding posts `COMMENT`, never `APPROVE` (the bot is a required check, not an approval); a review with any blocking finding (new or still-open) posts `REQUEST_CHANGES`, notifies Slack, and fails the review job.
 - An infrastructure error (Node setup or Claude install failure, Claude/API error, timeout after `review_timeout_minutes`, unusable reviewer output) does not fail the job: the bot posts a `COMMENT` saying the review could not run, never `APPROVE` or `REQUEST_CHANGES`, and the check stays green. Only blocking findings fail the job, plus a missing `claude_oauth_token` or missing PR commits in the checkout (config errors: use `fetch-depth: 0`), a missing trusted rules/agent/skill file, a `review_timeout_minutes` that is not a positive whole number, or a failure gathering PR context. A brief failure only warns.
-- `.github/workflows/action-tests.yml` tests the verdicts end to end; add one label at a time on a throwaway PR (each posts real reviews): `test:infra-error` (invalid token, green plus notice), `test:verdict-clean` (fake reviewer, `COMMENT`), `test:verdict-blocking` (fake reviewer, `REQUEST_CHANGES`, job red).
+- `.github/workflows/action-tests.yml` tests the verdicts end to end; add one label at a time on a throwaway PR (each posts real reviews): `test:infra-error` (invalid token, green plus notice), `test:verdict-clean` (fake reviewer, `COMMENT`), `test:verdict-blocking` (fake reviewer, `REQUEST_CHANGES`, job red), `test:hold` (`on-request` mode with an unrelated label: nothing posted, job red exactly when the bot's latest verdict requests changes).
 - Every finding is anchored to `file:line` and states the problem and the fix.
+- `rereview: on-request` reviews once, then only on a `review:again` (incremental) or `review:full` label; a push runs no model and the check restates the last verdict.
+- Findings a linter, formatter, type checker, or CI check already enforces are never reported, and the reviewer proves claims with read-only `git`, `rg`, and `ast-grep` searches.
+- Findings about the PR title or description never block and never get an inline thread; a missing linked issue is a body line, not a finding.
 - Each run posts a NEW delta-aware review: findings carry a stable `id` and `status` (`new`/`open`), the reviewer returns a top-level `resolved` array, and the body shows the `Since <sha7>` delta. Only `new` findings get inline comments.
 - Findings persist across runs to `last-review.json` in the cached session directory, so the next run knows what it reported before.
 - The PR diff is **not capped**. The whole elided diff is handed to the reviewer, which reads it agentically across as many turns as the PR needs (per-file `Read` with offset/limit, `Grep`), so a large PR gets full coverage. The review body carries no truncation notice.
@@ -48,7 +51,7 @@ Add `.github/workflows/review.yml` to your repo (copy from [`install/review.yml`
 name: PR Review Bot
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
 permissions:
   # contents: write lets the default GITHUB_TOKEN resolve fixed findings' threads
   # (resolveReviewThread). Drop it to contents: read if you do not want thread resolution.
@@ -64,10 +67,13 @@ jobs:
           fetch-depth: 0
       - uses: langwatch/langwatch-pr-review-bot@main
         with:
+          rereview: on-request
           slack_notify: "false"
           claude_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           langwatch_ingest_key: ${{ secrets.LANGWATCH_INGEST_KEY }}
 ```
+
+This installs the bot in `on-request` mode (see [Review once, then on request](#review-once-then-on-request)). For a full review on every push, the default, drop the `rereview` input and `labeled` from `types`. Leave `edited` out of `types` in either mode: editing the PR body never needs a new review.
 
 Pin to a commit SHA; repositories that require SHA-pinned actions reject tag and branch refs, including the actions nested inside this one. Repositories without this policy can use `@main` or `@v1` tags. If you set `review_label`, also add `labeled` to the trigger `types`.
 
@@ -95,8 +101,28 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | `github_token` | `${{ github.token }}` | Token for GitHub API calls (thread checks, posting the review). |
 | `claude_code_version` | `"2.1.270"` | Version of `@anthropic-ai/claude-code` to install. |
 | `review_timeout_minutes` | `"60"` | Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error. |
+| `rereview` | `"every-push"` | `every-push` re-reviews the whole PR on every push. `on-request` reviews in full once, then only when someone adds `rereview_label` or `full_review_label`. See [Review once, then on request](#review-once-then-on-request). Any other value fails the run. |
+| `rereview_label` | `"review:again"` | In `on-request` mode, adding this label runs an incremental re-review. The action removes it afterwards. |
+| `full_review_label` | `"review:full"` | In `on-request` mode, adding this label runs a full re-review. The action removes it afterwards. |
+| `ast_grep_version` | `"0.42.3"` | Version of `@ast-grep/cli` installed for the reviewer's pattern searches. |
 
 Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `base_branch` (default `main`).
+
+## Review once, then on request
+
+With the default `rereview: every-push`, every push re-reviews the whole PR. Each fix gets a fresh pass over everything, so a PR can collect new findings round after round. `rereview: on-request` stops that:
+
+| Event | What runs |
+| --- | --- |
+| `opened`, `reopened`, `ready_for_review` | A full review, as in `every-push`. |
+| `synchronize` (a push) | No model and nothing posted. The check fails while the bot's most recent verdict review is an undismissed "changes requested", with one error: fix the blocking findings in one push, then add the `review:again` label. Otherwise it passes. |
+| `labeled` with `rereview_label` (`review:again`) | An incremental re-review, then the label is removed. |
+| `labeled` with `full_review_label` (`review:full`) | A full re-review, then the label is removed. |
+| any other label or event | Nothing runs; the check carries the previous verdict, as for a push. |
+
+The check therefore still means something when `review` is a required status check: a push cannot turn a blocked PR green, and a clean PR stays green while the author keeps working. A human or an agent adds the label; a label added by the workflow's `GITHUB_TOKEN` never triggers a workflow, so the bot cannot trigger itself.
+
+**Incremental re-review.** When the bot has reviewed the PR before (the head it reviewed is stored in `last-review.json` and present in the checkout), a `review:again` run reconciles every previous finding against the whole PR as usual (open, resolved, or accepted), but reports a brand-new finding only on a line added between the previous head and the current one (`git diff <previous>..<head>`; this tree diff also works after a rebase). The reviewer is told this scope, and the action enforces it: any new finding outside those lines is dropped and the count is logged. A finding counts as previous only when its id was reported before, so a new problem cannot pass as "open". Without a previous head in the checkout the run falls back to a full review.
 
 ## How it works
 
@@ -120,7 +146,8 @@ action's own repo (trusted rules/agent/skills)
         |       |
         |       +--> resume prior session when present (memory of past findings)
         |       +--> pr-review skill
-        |       +--> read-only repo inspection
+        |       +--> read-only repo inspection (Read, Grep, Glob,
+        |            git diff/log/show/blame/grep, rg, ast-grep --pattern)
         |
         +--> PR diff supplied as untrusted evidence
         |
@@ -159,15 +186,23 @@ The runner fetches the action's own repository into `${{ github.action_path }}` 
 
 The action itself owns the gate and orchestration. It embeds a small Python diff-parsing helper but no application layer: its steps run the context checks, gather the diff, invoke Claude, validate the review output against the review JSON schema with `ajv`, post the GitHub review, send Slack notifications, generate the brief, and fail the job when violations are found.
 
+### Read-only code tooling
+
+Besides reading files, the reviewer can run `git diff`, `git log`, `git show`, `git blame`, `git grep`, `rg`, and `ast-grep run --pattern` (`sg run`), so it can prove a claim before it reports it: that an existing tool already does something, that code is dead, that no test covers a change, or that a change breaks a caller. A finding the search contradicts is dropped. The working tree is untrusted and the Claude token is in the reviewer's environment, so nothing that executes repository code or repository config is allowed: no package managers, interpreters, compilers, linters, or scripts. In the headless run any command outside the allow-list is denied, and every allowed command goes through [`scripts/readonly-tool-guard.sh`](scripts/readonly-tool-guard.sh), which refuses flags that run a program or write files (`git grep -O`, `rg --pre`, `ast-grep -U`, and others), refuses any path outside the workspace (including symbolic links pointing out of it), runs ast-grep with a trusted empty config so an `sgconfig.yml` from the pull request is never loaded, and runs the real binary without the Claude or GitHub token in its environment. ast-grep is installed into a private prefix that is not on `PATH`, and ripgrep is installed if the runner lacks it; a failed install only leaves the reviewer without that tool.
+
+The reviewer does not report anything a linter, formatter, type checker, or CI check in the repository already enforces (comment length, formatting, import order, unused code, naming rules, PR-body sections a workflow checks). It looks for the rule in the repository's lint and CI config before it reports.
+
 The automated review runs through `claude -p` with a JSON Schema. The brief then uses `claude --continue` in the same job session, so the second stage can use the completed review context without becoming a second code review.
 
 ### What it posts
 
 Each run posts three things, delta-aware against the bot's previous review on the same PR:
 
-1. **A review with the delta.** The body is for humans: it opens with `**@LangWatchReviewBot**`. There is no truncation notice — the diff is never capped. When any files were elided as generated it adds a `Generated files elided (N): <basenames>` line (a bare `Generated files elided (N).` above five files). It gives a `**N blocking · M non-blocking**` count (or `**No blocking findings.**` when clean), and — when a previous review exists — a `Since <sha7>: X resolved · Y new · Z still open` line. Still-open findings that carry a stored inline url get a `Still open:` line linking each id straight to its thread. The body never explains the PR and never repeats the inline findings. It lists outside-diff findings — both `new` and still-`open` (open findings with no stored url) — under `Outside the diff:`, so a still-open blocker never disappears. The review is `REQUEST_CHANGES` when any finding is blocking (new or still-open), otherwise `COMMENT`.
-2. **Inline comments for the new findings.** One per finding with `status: new` anchored to a diff line, formatted as `**[P0 · blocking]** <what is wrong>` followed by `Fix: <the concrete change>` — no history narration, no rule citations, no praise. Still-open findings get no new inline comment; a run whose only blocking findings are still-open posts the short body with no inline comments — the "still blocked" signal.
+1. **A review with the delta.** The body is for humans: it opens with `**@LangWatchReviewBot**`. There is no truncation notice — the diff is never capped. When any files were elided as generated it adds a `Generated files elided (N): <basenames>` line (a bare `Generated files elided (N).` above five files). It gives a `**N blocking · M non-blocking**` count (or `**No blocking findings.**` when clean), and — when a previous review exists — a `Since <sha7>: X resolved · Y new · Z still open` line. Still-open findings that carry a stored inline url get a `Still open:` line linking each id straight to its thread. The body never explains the PR and never repeats the inline findings. It lists outside-diff findings — both `new` and still-`open` (open findings with no stored url) — under `Outside the diff:`, so a still-open blocker never disappears. Findings about the PR title or description are listed under `PR description:`; they are always P2 and non-blocking and never get an inline thread. When the PR links no issue, the body carries the line `No linked issue: design decisions were not checked against acceptance criteria.` (never a finding or a thread). An incremental re-review adds `Incremental review: new findings only on lines changed since <sha7>.` The review is `REQUEST_CHANGES` when any finding is blocking (new or still-open), otherwise `COMMENT`.
+2. **Inline comments for the new findings.** One per finding with `status: new` anchored to a diff line, formatted as `**[P0 · blocking]** <what is wrong>` followed by `Fix: <the concrete change>` — no history narration, no rule citations, no praise. Still-open findings get no new inline comment, and a finding whose id already has an open thread of the bot's is treated as still open and linked, never posted a second time; a run whose only blocking findings are still-open posts the short body with no inline comments — the "still blocked" signal. When the reviewer is at least 99% sure of a fix that is local to the anchored lines, the comment carries a GitHub `suggestion` block with the exact replacement (a multi-line one spans its whole line range). A suggestion whose range is not in the diff or not inside the file is dropped and the finding is kept.
 3. **The human review brief as a PR comment.** Upserted into one issue comment per PR: the bot finds its prior brief by the `<!-- langwatch-review-brief -->` marker and updates it in place, or posts a new one when none exists. The comment is headed `**@LangWatchReviewBot** · Review brief · \`<head sha7>\``. The brief is standalone and is also uploaded as a workflow artifact.
+
+The title, body, and labels are read from the GitHub API at run time, not from the event payload, so a re-run sees a body edited since the triggering event (and the `review_label` gate sees the current labels). If that call fails, the action warns and uses the payload.
 
 Findings are delta-aware: each carries a stable `id` and a `status` of `new` or `open`, and the reviewer returns a top-level `resolved` array of the ids fixed since the last run. That state is persisted to `last-review.json` inside the cached session directory so the next run knows what it reported before.
 
@@ -183,6 +218,7 @@ After the review is posted and the run's findings are recorded, a separate best-
 
 - **Resolved-finding threads.** For each finding the new review reports fixed — an id in the top-level `resolved` array, or a prior id that has vanished from `findings`, `resolved`, and the accepted ids (gone means fixed) — the action finds the review thread whose root comment carries that finding's `<!-- id:<id> -->` marker. A thread is the bot's own only when its root author is the login the bot posts as (resolved once via GraphQL `viewer { login }` — which returns `github-actions` under the default token — and falling back to `github-actions[bot]` only if that query fails) **and** the root body carries the marker — never login alone, never marker alone — so a human quoting a finding is not mistaken for the bot's own thread, and a user or GitHub-App `github_token` is recognised the same as the default one. It **resolves the thread first**, and only when the resolve succeeds posts one reply `` **@LangWatchReviewBot** Fixed as of `<sha7>`. `` — so a token that cannot resolve never leaves a dangling "done" reply on a still-open thread. A fixed finding with no inline thread is reported as a warning instead. Already-resolved threads are left untouched, so re-running on an unchanged diff posts no duplicate reply. Threads not rooted in this bot's own comment are never touched.
 - **Stale changes-requested reviews.** When the new review is clean (`COMMENT`), the action dismisses each earlier review still in `CHANGES_REQUESTED` that is the bot's own — its author is the login the bot posts as **and** its body begins with the `**@LangWatchReviewBot**` signature (both required, so neither a human review under a shared login nor a human quoting the signature is dismissed) — with the message `` Superseded by `<sha7>` review. ``, so the merge status reflects the current verdict. It never dismisses the review just posted, a human review, or another bot's review, and it dismisses nothing while the new review still requests changes.
+- **Earlier review bodies.** Whenever a run posts a new review, the bot's own earlier review bodies on the PR (verdicts and could-not-run notices, matched by the same login-plus-signature rule) are minimized as outdated, so the timeline shows one current verdict. Minimizing never changes a review's state, and the review just posted, human reviews, and other bots' reviews are never touched.
 - **Findings explained away or deferred in a reply.** Before each review the action collects the replies on its own unresolved finding threads and passes them to the reviewer inside the untrusted evidence fence. Only replies from an `OWNER`, `MEMBER`, or `COLLABORATOR` are shown to the reviewer; a reply from an outside account cannot accept a finding and is dropped (the count is logged). When a shown reply substantively refutes a finding, or defers it to a concrete follow-on (an issue/PR number, a GitHub issue URL, or wording like "tracked in"/"deferred to"), the reviewer marks the finding **accepted** instead of re-raising it: the delta line then reads `Since <sha7>: X resolved · A accepted · Y new · Z still open`, the thread is resolved (again, resolve first) with a `` **@LangWatchReviewBot** Accepted: <reason> `` reply, and a deferred blocking finding is also listed under `Deferred with a linked issue:` so the deferral is visible. A bare acknowledgement ("acknowledged", "will fix") does not accept, and a bot-authored reply never counts.
 
 The bot acts through the workflow's `github_token`. Posting thread replies and the [dismiss-a-review](https://docs.github.com/en/rest/pulls/reviews#dismiss-a-review-for-a-pull-request) REST call work under `pull-requests: write`. Resolving a thread with [`resolveReviewThread`](https://docs.github.com/en/graphql/reference/mutations#resolvereviewthread) needs one more grant: add `contents: write` to the workflow's `permissions:` alongside `pull-requests: write`. With both, the default `GITHUB_TOKEN` (`github-actions[bot]`) resolves threads — no PAT or GitHub-App token is required (verified on proof PR #11: with only `contents: read` the mutation returns `Resource not accessible by integration`; adding `contents: write` resolves the thread). Because the action resolves before replying, a token that still cannot resolve posts no reply at all and emits a warning naming the finding and this requirement, rather than leaving a "done" reply on a thread that stays open. Either way the resolve failure is only a `::warning::` and never fails the job.
@@ -211,7 +247,7 @@ A **design decision** is a diff choice that introduces a constraint or capabilit
 
 No other phrasing counts — a sentence that happens to contain the word "license:" without starting the line (or, for the `Decision:` form, without the dash-separated `license:` clause) is not collected. Either matching line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.
 
-When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses. It then posts a single **non-blocking** `no-linked-issue` note saying so, and flags no individual decisions.
+When a PR links **no** issue, the reviewer cannot check licenses and flags no individual decisions. The action adds one line to the review body, `No linked issue: design decisions were not checked against acceptance criteria.`, and never raises it as a finding or a thread. When the linked issue has no acceptance criteria, no decision is flagged either.
 
 ## Configuration
 
