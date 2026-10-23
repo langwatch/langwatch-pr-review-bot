@@ -418,14 +418,26 @@ Feature: Automated PR review
   Scenario: The pull request has no linked issue
     Given the pull request has no linked issue
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    Then a single "no-linked-issue" hint reports that licenses cannot be checked
     And no per-decision finding is fabricated
+
+  Scenario: The no-linked-issue hint is shown in the review body, not as a thread
+    Given the PR reviewer returns a "no-linked-issue" finding, even one marked blocking
+    When the review is posted
+    Then the review body carries a "Hint:" line with its summary
+    And no inline review thread is opened for it
+    And it is not counted as a finding and does not affect the review verdict
+
+  Scenario: A missing issue or acceptance-criteria list raises no other finding
+    Given the pull request links no issue and its body has no acceptance-criteria section
+    When the PR reviewer reviews it
+    Then no finding other than the "no-linked-issue" hint mentions the missing issue or acceptance criteria
 
   @ac-5
   Scenario: The linked issue has no acceptance criteria
     Given the pull request is linked to an issue that has no acceptance criteria
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    Then a single "no-linked-issue" hint reports that licenses cannot be checked
     And no per-decision finding is fabricated
 
   @ac-6
@@ -471,13 +483,13 @@ Feature: Automated PR review
     And the issue is fetched only once
 
   @ac-12
-  Scenario: A linked-issue fetch failure falls back to no-linked-issue with a logged warning
+  Scenario: A linked-issue fetch failure falls back to the no-linked-issue hint with a logged warning
     Given the pull request body references a same-repo issue
     And the fetch for that issue's body fails
     When the action fetches linked issues
     Then a warning is logged naming the issue that could not be fetched
     And the review bundle carries no "<linked-issue>" section for that issue
-    And the review proceeds with the "no-linked-issue" note instead of failing the run
+    And the review proceeds with the "no-linked-issue" hint instead of failing the run
 
   @ac-13
   Scenario: Linked-issue text is XML-escaped inside the review fence

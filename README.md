@@ -211,7 +211,7 @@ A **design decision** is a diff choice that introduces a constraint or capabilit
 
 No other phrasing counts — a sentence that happens to contain the word "license:" without starting the line (or, for the `Decision:` form, without the dash-separated `license:` clause) is not collected. Either matching line suppresses the `unlicensed-decision` finding for that decision. After the fact, the owner can also clear a posted finding by replying on its thread with a reason the finding does not apply, or a concrete follow-on (an issue/PR number, a URL, "tracked in ...") — the same owner-acceptance mechanism used for every other finding. A bare acknowledgement with no explanation or reference does not accept the finding.
 
-When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses. It then posts a single **non-blocking** `no-linked-issue` note saying so, and flags no individual decisions.
+When a PR links **no** issue (or the linked issue has no acceptance criteria), the reviewer cannot check licenses and flags no individual decisions. It returns one `no-linked-issue` finding, which the action shows as a `Hint:` line in the review body: never a thread, never counted, never blocking. PRs are not required to link an issue, so no other rule raises a finding for a missing issue, a missing AC list, or an empty PR-template section.
 
 ## Configuration
 
