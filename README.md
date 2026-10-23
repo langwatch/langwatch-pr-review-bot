@@ -28,7 +28,7 @@ PR review in this repository should be an enforceable engineering gate, not a su
 - The action ref on the `uses:` line (`@main`, or a pinned `@v1` tag) selects the version of the rules, agent, and skills that ships with the run.
 - Inline review comments are posted only for findings inside the PR diff; findings outside the diff (new and still-open) are listed in the review body under "Outside the diff".
 - Every finding carries a `priority` (`P0`/`P1`/`P2`) and a `blocking` flag. P0/P1 are blocking; P2 is non-blocking.
-- A review with no blocking finding posts `COMMENT`, never `APPROVE` (the bot is a required check, not an approval); a review with any blocking finding (new or still-open) posts `REQUEST_CHANGES`, notifies Slack, and fails the review job.
+- A review with no blocking finding posts `COMMENT` (the bot is a required check, not an approval), or `APPROVE` when `approve_when_clean: "true"`; a review with any blocking finding (new or still-open) posts `REQUEST_CHANGES`, notifies Slack, and fails the review job.
 - An infrastructure error (Node setup or Claude install failure, Claude/API error, timeout after `review_timeout_minutes`, unusable reviewer output) does not fail the job: the bot posts a `COMMENT` saying the review could not run, never `APPROVE` or `REQUEST_CHANGES`, and the check stays green. Only blocking findings fail the job, plus a missing `claude_oauth_token` or missing PR commits in the checkout (config errors: use `fetch-depth: 0`), a missing trusted rules/agent/skill file, a `review_timeout_minutes` that is not a positive whole number, or a failure gathering PR context. A brief failure only warns.
 - `.github/workflows/action-tests.yml` tests the verdicts end to end; add one label at a time on a throwaway PR (each posts real reviews): `test:infra-error` (invalid token, green plus notice), `test:verdict-clean` (fake reviewer, `COMMENT`), `test:verdict-blocking` (fake reviewer, `REQUEST_CHANGES`, job red).
 - Every finding is anchored to `file:line` and states the problem and the fix.
@@ -86,6 +86,7 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | Input | Default | Effect |
 | --- | --- | --- |
 | `review_label` | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
+| `approve_when_clean` | `"false"` | Post `APPROVE` instead of `COMMENT` when no finding is blocking. Only `"true"` enables it. On a branch that needs one approval this alone makes a PR mergeable, so pair it with a branch rule that also needs a human approval (for example a required-reviewers rule naming a human team). |
 | `slack_notify` | `"true"` | Post a Slack notification on blocking findings (needs `slack_webhook_url`). Only `"false"` disables it. |
 | `extra_instructions` | `""` | Extra guidance appended to the review prompt, subordinate to the action's rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted. |
 | `base_branch` | `"main"` | Only review PRs whose base branch is this branch. |

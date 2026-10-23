@@ -25,8 +25,21 @@ Feature: Automated PR review
     And the PR reviewer status check fails
     And a notification is posted to the Slack dev channel
 
+  Scenario: A clean review approves when the repo opts in
+    Given the action is configured with approve_when_clean set to "true"
+    When the PR reviewer finds only non-blocking findings, or none at all
+    Then the review is posted as an approval
+    And the PR reviewer status check passes
+
+  Scenario: A blocking review never approves, even when the repo opts in
+    Given the action is configured with approve_when_clean set to "true"
+    When the PR reviewer finds one or more blocking violations
+    Then the pull request is marked "changes requested"
+    And the PR reviewer status check fails
+
   Scenario: Non-blocking or no findings pass the review
     Given all prerequisite checks are green
+    And approve_when_clean is not set to "true"
     When the PR reviewer finds only non-blocking findings, or none at all
     Then any new findings are reported as inline review comments
     And the review is posted as a "comment" review, never an approval
