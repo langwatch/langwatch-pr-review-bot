@@ -418,14 +418,14 @@ Feature: Automated PR review
   Scenario: The pull request has no linked issue
     Given the pull request has no linked issue
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    Then no finding reports the missing issue or the missing acceptance criteria
     And no per-decision finding is fabricated
 
   @ac-5
   Scenario: The linked issue has no acceptance criteria
     Given the pull request is linked to an issue that has no acceptance criteria
     When the PR reviewer evaluates the "every design decision is licensed" rule
-    Then a single non-blocking "no-linked-issue" finding reports that licenses cannot be checked
+    Then no finding reports the missing issue or the missing acceptance criteria
     And no per-decision finding is fabricated
 
   @ac-6
@@ -471,13 +471,13 @@ Feature: Automated PR review
     And the issue is fetched only once
 
   @ac-12
-  Scenario: A linked-issue fetch failure falls back to no-linked-issue with a logged warning
+  Scenario: A linked-issue fetch failure is logged and the review continues without it
     Given the pull request body references a same-repo issue
     And the fetch for that issue's body fails
     When the action fetches linked issues
     Then a warning is logged naming the issue that could not be fetched
     And the review bundle carries no "<linked-issue>" section for that issue
-    And the review proceeds with the "no-linked-issue" note instead of failing the run
+    And the review proceeds as for a pull request with no linked issue instead of failing the run
 
   @ac-13
   Scenario: Linked-issue text is XML-escaped inside the review fence
