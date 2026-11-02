@@ -12,6 +12,10 @@ inputs:
     description: 'Post a Slack notification on blocking findings (needs slack_webhook_url).'
     required: false
     default: "true"
+  approve_when_clean:
+    description: 'Post APPROVE (not COMMENT) when a review has no blocking finding. Off by default: on a branch that needs one approval, the bot alone then makes a PR mergeable, so pair it with a rule that needs a human approval too.'
+    required: false
+    default: "false"
   extra_instructions:
     description: 'Extra guidance appended to the review prompt, subordinate to the action''s rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted.'
     required: false
@@ -357,6 +361,8 @@ runs:
         SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
         # Slack is opt-out: only an explicit 'false' disables it.
         SLACK_NOTIFY: ${{ inputs.slack_notify == 'false' && 'false' || 'true' }}
+        # Approval is opt-in: only an explicit 'true' enables it.
+        APPROVE_WHEN_CLEAN: ${{ inputs.approve_when_clean == 'true' && 'true' || 'false' }}
         EXTRA_INSTRUCTIONS: ${{ inputs.extra_instructions }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -1047,12 +1053,16 @@ runs:
         fi
 
         # REQUEST_CHANGES when any finding is blocking (new or still-open); otherwise
-        # COMMENT, never APPROVE: the bot is a required check, not an approval — the job
+        # COMMENT by default: the bot is a required check, not an approval — the job
         # result is the gate, and an APPROVE alone would satisfy a 1-approval branch rule
-        # with no human review. A run whose only blocking findings are still-open (no new ones)
-        # posts a short body with no inline comments — the "still blocked" signal.
+        # with no human review. approve_when_clean opts in to APPROVE for a clean run,
+        # for repos whose branch rules need a human approval as well. A run whose only
+        # blocking findings are still-open (no new ones) posts a short body with no
+        # inline comments — the "still blocked" signal.
         if [[ "$blocking" -gt 0 ]]; then
           event='REQUEST_CHANGES'
+        elif [[ "${APPROVE_WHEN_CLEAN:-false}" == "true" ]]; then
+          event='APPROVE'
         else
           event='COMMENT'
         fi
