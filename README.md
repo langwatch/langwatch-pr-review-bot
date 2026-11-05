@@ -227,13 +227,13 @@ Claude Code is installed from the official `@anthropic-ai/claude-code` package a
 
 ## Telemetry (LangWatch)
 
-When `LANGWATCH_INGEST_KEY` is set, every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch. Without it, telemetry is disabled and the review runs unchanged.
+When `LANGWATCH_INGEST_KEY` is set, every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch. The action installs the LangWatch CLI and instruments Claude Code on the runner so its hooks report the active repository and branch, allowing LangWatch to attribute the session to matching pull requests. Without the key, the CLI setup is skipped, telemetry is disabled, and the review runs unchanged. Telemetry setup is best-effort and does not block a review.
 
 Secret (optional):
 
 - `LANGWATCH_INGEST_KEY` — a LangWatch **ingest key** (`ik-lw-...`, trace-write only) created in the project settings, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. A project API key (`sk-lw-...`) also works but grants more than needed; prefer the ingest key. The workflow sends it as `Authorization: Bearer`.
 
-The export is configured inside the action's steps (`action.yml`): the non-secret OTEL variables are written once to `$GITHUB_ENV`, and the secret-bearing `OTEL_EXPORTER_OTLP_HEADERS` is set per `claude -p` step so no secret is echoed. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
+The export is configured inside the action's steps (`action.yml`): the non-secret OTEL variables are written once to `$GITHUB_ENV`, and the secret-bearing `OTEL_EXPORTER_OTLP_HEADERS` is set per `claude -p` step so no secret is echoed. The CLI reads the key from its step-scoped environment; the action keeps the explicit OTLP header off `$GITHUB_ENV` and sets it only on each `claude -p` step. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
 
 Docs:
 

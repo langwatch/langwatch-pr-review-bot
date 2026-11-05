@@ -253,6 +253,23 @@ runs:
         CLAUDE_CODE_VERSION: ${{ inputs.claude_code_version }}
       run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
+    # The LangWatch CLI installs Claude hooks that report the active checkout to
+    # coding-session attribution. Keep telemetry optional and never block a review
+    # if the CLI install or its local setup fails.
+    - name: Install LangWatch CLI
+      continue-on-error: true
+      if: ${{ steps.context.outputs.skip != 'true' && inputs.langwatch_ingest_key != '' }}
+      shell: bash
+      run: npm install --global langwatch
+
+    - name: Instrument Claude Code for LangWatch
+      continue-on-error: true
+      if: ${{ steps.context.outputs.skip != 'true' && inputs.langwatch_ingest_key != '' }}
+      shell: bash
+      env:
+        LANGWATCH_INGEST_KEY: ${{ inputs.langwatch_ingest_key }}
+      run: langwatch instrument claude
+
     - name: Verify Claude Code
       continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
