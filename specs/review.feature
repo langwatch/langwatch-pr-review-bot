@@ -158,6 +158,35 @@ Feature: Automated PR review
     And the thread is resolved with a one-line "Accepted" reply
     And the review body lists the finding under "Deferred with a linked issue:"
 
+  Scenario: A reply on a thread the author already resolved still closes the finding
+    Given a bot-opened thread with a human reply that explains why the finding does not apply
+    And the author resolved the thread after replying
+    When the bot reviews the next push
+    Then the reviewer sees that reply
+    And the finding is reported as accepted, not open and not new
+
+  Scenario: An accepted finding is never raised again on a later push
+    Given a finding was accepted in an earlier review of this pull request
+    When the bot reviews any later push
+    Then the finding's id is not reported, even if the reviewer emits it
+    And the reviewer is told not to raise the same problem under another id
+
+  Scenario: A finding closed two pushes ago is still remembered
+    Given a finding was fixed or accepted two or more reviews ago
+    When the bot reviews the next push
+    Then the reviewer is given that finding as closed
+
+  Scenario: A finding never rises in priority across pushes
+    Given a finding was reported at P1 in an earlier review
+    When a later review emits the same id at P0
+    Then the finding is reported at P1
+    And it is blocking only as the P1 was
+
+  Scenario: A fixed finding whose fix is reverted comes back under its own id
+    Given a finding was closed as fixed in an earlier review
+    When a later push reverts that fix
+    Then the finding is reported under its original id at no higher priority than before
+
   Scenario: A bare acknowledgement on a bot thread keeps the finding open
     Given an unresolved bot-opened thread with a human reply that only acknowledges the finding without explanation or reference
     When the bot reviews the next push

@@ -65,6 +65,14 @@ A previous finding is in exactly one of `findings`, `resolved`, or `accepted`.
 
 The input may also carry a `<dismissed-findings>` block listing finding ids a maintainer has already dismissed. Never place any of those ids in `findings` or `resolved`; they are handled as accepted automatically, so treat them as already closed.
 
+### Closed findings stay closed
+
+The caller may list every finding closed on this PR in any earlier run, each `closed_as` `"accepted"` (a maintainer answered it) or `"fixed"`. Re-raising a closed point is what turns a review into a loop, so:
+
+- Never emit an accepted id, and never raise the same problem again under a new id, on another line, in other words, or at another priority.
+- A fixed finding returns only when the current diff reverts the fix, under its same id.
+- Never raise a finding's priority above the one it had before. The action enforces this and drops accepted ids whatever you emit.
+
 The `id` is a stable short slug you assign (e.g. `retry-swallows-error`); reuse it verbatim across runs so an open finding keeps its identity. `status` is bookkeeping metadata only — the `summary`/`fix` text must still read as if stated for the first time. Never narrate history in the text ("still open", "carried over", "regression"). Do not reverse earlier guidance without a substantiated reason.
 
 ## Licensing design decisions
