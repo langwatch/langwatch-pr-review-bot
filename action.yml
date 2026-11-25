@@ -276,6 +276,25 @@ runs:
         LANGWATCH_INGEST_KEY: ${{ inputs.langwatch_ingest_key }}
       run: langwatch instrument claude
 
+    # Claude Code's settings `env` overrides the process env, and the CLI writes its own
+    # OTEL_* values (service.name=claude-code, http/protobuf) with no option to change them.
+    # Re-apply the action's values (already in the environment from $GITHUB_ENV) over the
+    # CLI's, leaving the CLI's hooks and its ingest-key header untouched.
+    - name: Apply action telemetry settings over the CLI's
+      continue-on-error: true
+      if: ${{ steps.context.outputs.skip != 'true' && inputs.langwatch_ingest_key != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        settings="$HOME/.claude/settings.json"
+        tmp="$(mktemp)"
+        jq 'reduce ("OTEL_EXPORTER_OTLP_PROTOCOL","OTEL_EXPORTER_OTLP_ENDPOINT","OTEL_RESOURCE_ATTRIBUTES",
+                    "OTEL_LOG_USER_PROMPTS","OTEL_LOG_ASSISTANT_RESPONSES","OTEL_LOG_TOOL_DETAILS",
+                    "OTEL_LOG_TOOL_CONTENT","OTEL_LOG_RAW_API_BODIES") as $k
+              (.; if (env[$k] // "") != "" then .env[$k] = env[$k] else . end)' \
+          "$settings" > "$tmp"
+        mv "$tmp" "$settings"
+
     - name: Verify Claude Code
       continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' }}
