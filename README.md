@@ -94,6 +94,7 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | `slack_webhook_url` | `""` | Slack webhook for blocking-finding notifications. |
 | `github_token` | `${{ github.token }}` | Token for GitHub API calls (thread checks, posting the review). |
 | `claude_code_version` | `"2.1.270"` | Version of `@anthropic-ai/claude-code` to install. |
+| `langwatch_cli_version` | `"2.3.0"` | Version of `langwatch` (the LangWatch CLI) to install. |
 | `review_timeout_minutes` | `"60"` | Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error. |
 
 Fork PRs are skipped automatically (secrets are unavailable there). The reviewer runs only on PRs targeting `base_branch` (default `main`).
@@ -233,7 +234,7 @@ Secret (optional):
 
 - `LANGWATCH_INGEST_KEY` — a LangWatch **ingest key** (`ik-lw-...`, trace-write only) created in the project settings, e.g. https://app.langwatch.ai/langwatch-pr-review-bot-jSBhhR/settings. A project API key (`sk-lw-...`) also works but grants more than needed; prefer the ingest key. The workflow sends it as `Authorization: Bearer`.
 
-The export is configured inside the action's steps (`action.yml`): the non-secret OTEL variables are written once to `$GITHUB_ENV`, and the secret-bearing `OTEL_EXPORTER_OTLP_HEADERS` is set per `claude -p` step so no secret is echoed. The CLI reads the key from its step-scoped environment; the action keeps the explicit OTLP header off `$GITHUB_ENV` and sets it only on each `claude -p` step. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
+The export is configured inside the action's steps (`action.yml`): the non-secret OTEL variables are written once to `$GITHUB_ENV`, and the secret-bearing `OTEL_EXPORTER_OTLP_HEADERS` is set per `claude -p` step so no secret is echoed. The CLI reads the key from its step-scoped environment, and `langwatch instrument claude` writes the telemetry wiring, including the ingest key, into `~/.claude/settings.json` on the runner (ephemeral on GitHub-hosted runners). The action itself keeps the explicit OTLP header off `$GITHUB_ENV` and sets it only on each `claude -p` step. Self-hosted LangWatch: change `OTEL_EXPORTER_OTLP_ENDPOINT` to `<your-instance>/api/otel`.
 
 Docs:
 

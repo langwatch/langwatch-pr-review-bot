@@ -16,4 +16,5 @@ Feature: Review bot observability
   Scenario: Telemetry export is not configured
     Given telemetry export to LangWatch is not configured
     When the pipeline runs
-    Then the review runs unchanged and nothing is exported
+    Then the LangWatch CLI setup is skipped
+    And the review runs unchanged and nothing is exported

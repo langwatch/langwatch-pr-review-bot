@@ -39,6 +39,10 @@ inputs:
     description: 'Version of @anthropic-ai/claude-code to install.'
     required: false
     default: "2.1.270"
+  langwatch_cli_version:
+    description: 'Version of langwatch (the LangWatch CLI) to install.'
+    required: false
+    default: "2.3.0"
   review_timeout_minutes:
     description: "Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error."
     required: false
@@ -260,7 +264,9 @@ runs:
       continue-on-error: true
       if: ${{ steps.context.outputs.skip != 'true' && inputs.langwatch_ingest_key != '' }}
       shell: bash
-      run: npm install --global langwatch
+      env:
+        LANGWATCH_CLI_VERSION: ${{ inputs.langwatch_cli_version }}
+      run: npm install --global "langwatch@${LANGWATCH_CLI_VERSION}"
 
     - name: Instrument Claude Code for LangWatch
       continue-on-error: true
