@@ -221,6 +221,9 @@ runs:
       env:
         LANGWATCH_INGEST_KEY: ${{ inputs.langwatch_ingest_key }}
         CODE_MODE: ${{ inputs.code_mode }}
+        ACTION_PATH: ${{ github.action_path }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
         # Disabled when LANGWATCH_INGEST_KEY is not configured, so a missing key never breaks the review.
@@ -245,7 +248,12 @@ runs:
           echo "OTEL_LOG_TOOL_DETAILS=1"
           echo "OTEL_LOG_TOOL_CONTENT=1"
           echo "OTEL_LOG_RAW_API_BODIES=1"
-          echo "OTEL_RESOURCE_ATTRIBUTES=service.name=pr-review-bot"
+          # Keep telemetry setup best-effort: a missing identity must not break a review.
+          attributes="$(bash "$ACTION_PATH/scripts/review-telemetry-attributes.sh")" || {
+            echo "::warning::Could not add PR attribution to review telemetry." >&2
+            attributes="service.name=pr-review-bot"
+          }
+          echo "OTEL_RESOURCE_ATTRIBUTES=$attributes"
         } >> "$GITHUB_ENV"
 
     - name: Set up Node.js
