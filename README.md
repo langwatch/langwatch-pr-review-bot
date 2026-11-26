@@ -93,7 +93,8 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | `langwatch_ingest_key` | `""` | LangWatch ingest key; enables telemetry when set. |
 | `slack_webhook_url` | `""` | Slack webhook for blocking-finding notifications. |
 | `github_token` | `${{ github.token }}` | Token for GitHub API calls (thread checks, posting the review). |
-| `claude_code_version` | `"2.1.270"` | Version of `@anthropic-ai/claude-code` to install. |
+| `claude_code_version` | `"2.1.332"` | Version of `@anthropic-ai/claude-code` to install. |
+| `code_mode` | `"true"` | Run both `claude -p` calls with Claude Code's experimental [Code Mode](https://code.claude.com/docs/en/code-mode) (Claude writes JavaScript that batches several tool calls per step; about 25% cheaper in a LangWatch benchmark). Set `"false"` for the ordinary tools and span tracing. |
 | `langwatch_cli_version` | `"2.3.0"` | Version of `langwatch` (the LangWatch CLI) to install. |
 | `review_timeout_minutes` | `"60"` | Minutes before each `claude -p` call (review and brief) is stopped; a timed-out review is treated as an infra error. |
 
@@ -229,6 +230,8 @@ Claude Code is installed from the official `@anthropic-ai/claude-code` package a
 ## Telemetry (LangWatch)
 
 When `LANGWATCH_INGEST_KEY` is set, every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch. The action installs the LangWatch CLI and instruments Claude Code on the runner so its hooks report the active repository and branch, allowing LangWatch to attribute the session to matching pull requests. Without the key, the CLI setup is skipped, telemetry is disabled, and the review runs unchanged. Telemetry setup is best-effort and does not block a review.
+
+With `code_mode` on (the default), Code Mode refuses to start while span tracing is enabled, so the action does not set `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` and forces it off for both `claude -p` calls. Logs and metrics export stays on: telemetry arrives as Claude Code events/logs and metrics, not traces/spans. Set `code_mode: "false"` to get spans back.
 
 Secret (optional):
 
