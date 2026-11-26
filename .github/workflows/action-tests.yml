@@ -4,7 +4,8 @@ name: Action tests
 # is added, so pushes and other labels never re-run it.
 #   test:infra-error     invalid Claude token: job green, COMMENT notice, no verdict review.
 #   test:verdict-clean   fake reviewer, no findings: job green, COMMENT, never APPROVE.
-#   test:verdict-blocking fake reviewer, one blocking finding: job red, REQUEST_CHANGES.
+#   test:verdict-approve  fake reviewer, no findings, approve on: APPROVE plus the review-bot-approved label.
+#   test:verdict-blocking fake reviewer, one blocking finding, approve on: job red, REQUEST_CHANGES, label removed.
 # Add the labels ONE AT A TIME on a throwaway PR: each posts real reviews on it.
 # review.yml does not trigger on `labeled`, so its runs cannot race the assertions.
 on:
@@ -105,6 +106,53 @@ jobs:
           [[ "$commented" -ge 1 ]] || { echo "::error::No signed COMMENTED review on the head commit."; exit 1; }
           [[ "$approved" -eq 0 ]] || { echo "::error::The bot approved; a clean review must only comment."; exit 1; }
 
+  verdict-approve:
+    if: github.event.label.name == 'test:verdict-approve'
+    runs-on: ubuntu-latest
+    env:
+      # setup-node prepends its bin dir to PATH after our fake is added, so the npm-installed
+      # claude would shadow the fake; a prefix off PATH keeps the real claude out of the way.
+      NPM_CONFIG_PREFIX: ${{ github.workspace }}/../npm-global-off-path
+      FAKE_REVIEW_JSON: '{"findings":[],"resolved":[],"accepted":[]}'
+    steps:
+      - name: Record start time
+        id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Install fake claude
+        uses: ./.github/actions/fake-claude
+
+      - uses: ./
+        id: action
+        with:
+          claude_oauth_token: 'dummy-token-fake-claude'
+          review_label: 'test:verdict-approve'
+          slack_notify: 'false'
+          approve: 'true'
+
+      - name: Assert an opted-in clean review approves and labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          START_AT: ${{ steps.start.outputs.at }}
+          ACTION_OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          reviews="$(gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate | jq -s 'add // []')"
+          count() { jq --arg sha "$HEAD_SHA" --arg start "$START_AT" --arg st "$1" '[.[] | select(.commit_id == $sha and .submitted_at >= $start and .state == $st and (((.body // "") | contains("<!-- review-infra-error -->")) | not) and ((.body // "") | startswith("**@LangWatchReviewBot**")))] | length' <<< "$reviews"; }
+          approved="$(count APPROVED)"
+          labelled="$(gh api "/repos/${REPOSITORY}/issues/${PR_NUMBER}/labels" --jq '[.[] | select(.name == "review-bot-approved")] | length')"
+          echo "action outcome: $ACTION_OUTCOME; signed APPROVED: $approved; label: $labelled"
+          [[ "$ACTION_OUTCOME" == "success" ]] || { echo "::error::The action step did not succeed on a clean review."; exit 1; }
+          [[ "$approved" -ge 1 ]] || { echo "::error::No signed APPROVED review on the head commit."; exit 1; }
+          [[ "$labelled" -eq 1 ]] || { echo "::error::The PR does not carry the review-bot-approved label."; exit 1; }
+
   verdict-blocking:
     if: github.event.label.name == 'test:verdict-blocking'
     runs-on: ubuntu-latest
@@ -133,6 +181,7 @@ jobs:
           claude_oauth_token: 'dummy-token-fake-claude'
           review_label: 'test:verdict-blocking'
           slack_notify: 'false'
+          approve: 'true'
 
       - name: Assert a blocking review requests changes and fails the job
         env:
@@ -148,3 +197,5 @@ jobs:
           echo "action outcome: $ACTION_OUTCOME; signed CHANGES_REQUESTED: $changes"
           [[ "$ACTION_OUTCOME" == "failure" ]] || { echo "::error::The action step should fail on a blocking finding."; exit 1; }
           [[ "$changes" -ge 1 ]] || { echo "::error::No signed CHANGES_REQUESTED review on the head commit."; exit 1; }
+          labelled="$(gh api "/repos/${REPOSITORY}/issues/${PR_NUMBER}/labels" --jq '[.[] | select(.name == "review-bot-approved")] | length')"
+          [[ "$labelled" -eq 0 ]] || { echo "::error::A blocking review left the review-bot-approved label on."; exit 1; }

@@ -29,10 +29,25 @@ Feature: Automated PR review
     Given all prerequisite checks are green
     When the PR reviewer finds only non-blocking findings, or none at all
     Then any new findings are reported as inline review comments
-    And the review is posted as a "comment" review, never an approval
+    And the review is posted as a "comment" review, unless the workflow opts in to approving
     And the pull request is not marked "changes requested"
     And the PR reviewer status check passes
     And each finding carries a priority and states whether it is blocking
+
+  Scenario: An opted-in workflow gets an approval on a passing review
+    Given the workflow sets approve to "true"
+    And all prerequisite checks are green
+    When the PR reviewer finds only non-blocking findings, or none at all
+    Then the review is posted as an approval, which counts toward a required approval
+    And the pull request is labelled "review-bot-approved"
+    And the bot's earlier "changes requested" reviews are dismissed as superseded
+
+  Scenario: A blocking review removes the approval label
+    Given the workflow sets approve to "true"
+    And the pull request is labelled "review-bot-approved"
+    When the PR reviewer finds a blocking violation
+    Then the pull request is marked "changes requested"
+    And the "review-bot-approved" label is removed
 
   Scenario: Reviewer output is accepted in either supported shape
     Given the PR reviewer returns valid findings, either as plain JSON or inside prose
@@ -203,8 +218,8 @@ Feature: Automated PR review
     Then the new finding blocks the review
     And it is not auto-accepted on the basis of the earlier dismissal
 
-  Scenario: Dismissing a legacy approving review by the bot does not accept its findings
-    Given the bot's most recent review is a legacy approval that a human then dismissed
+  Scenario: Dismissing an approving review by the bot does not accept its findings
+    Given the bot's most recent review is an approval that a human then dismissed
     When the bot reviews the next push
     Then its findings are not marked accepted on the basis of that dismissal
     And any still-open finding stays open

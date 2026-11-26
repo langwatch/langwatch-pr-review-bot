@@ -8,6 +8,10 @@ inputs:
     description: 'When non-empty, review only PRs carrying this label. Empty = always on.'
     required: false
     default: ""
+  approve:
+    description: 'When "true", a review with no blocking finding posts APPROVE, which counts toward a required approval, and labels the PR review-bot-approved; a blocking review removes that label. Otherwise a clean review posts COMMENT.'
+    required: false
+    default: "false"
   slack_notify:
     description: 'Post a Slack notification on blocking findings (needs slack_webhook_url).'
     required: false
@@ -167,7 +171,7 @@ runs:
         #
         # Fire ONCE per dismissal: US-5 applies only when the DISMISSED review is the
         # bot's most recent verdict review (APPROVED/CHANGES_REQUESTED/DISMISSED/COMMENTED).
-        # A signed COMMENT is the bot's clean verdict. The only signed COMMENTED reviews
+        # A signed COMMENT or APPROVE is the bot's clean verdict. The only signed COMMENTED reviews
         # the bot posts are that verdict and the infra notice, and the notice is excluded
         # by its marker. Once the bot answers the
         # dismissal with a new (clean) review,
@@ -194,7 +198,7 @@ runs:
             actor="$(jq -r '.actor.login // ""' <<< "$dismiss_event")"
             prev_state="$(jq -r '.previousReviewState // ""' <<< "$dismiss_event")"
             # Only a dismissed CHANGES_REQUESTED review accepts findings; dismissing the
-            # bot's own legacy APPROVE (previousReviewState APPROVED) must not, and a self
+            # bot's own APPROVE (previousReviewState APPROVED) must not, and a self
             # dismissal (US-3 supersession) is excluded by the actor check.
             if [[ -n "$actor" && "${actor%\[bot\]}" != "$self_norm" && "$prev_state" == "CHANGES_REQUESTED" ]]; then
               dismissed_by_human=true
@@ -416,6 +420,7 @@ runs:
         SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
         # Slack is opt-out: only an explicit 'false' disables it.
         SLACK_NOTIFY: ${{ inputs.slack_notify == 'false' && 'false' || 'true' }}
+        APPROVE: ${{ inputs.approve }}
         EXTRA_INSTRUCTIONS: ${{ inputs.extra_instructions }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -1114,12 +1119,13 @@ runs:
         fi
 
         # REQUEST_CHANGES when any finding is blocking (new or still-open); otherwise
-        # COMMENT, never APPROVE: the bot is a required check, not an approval — the job
-        # result is the gate, and an APPROVE alone would satisfy a 1-approval branch rule
-        # with no human review. A run whose only blocking findings are still-open (no new ones)
-        # posts a short body with no inline comments — the "still blocked" signal.
+        # APPROVE when the caller opted in (it satisfies a 1-approval branch rule with no
+        # human review), else COMMENT. A run whose only blocking findings are still-open
+        # (no new ones) posts a short body with no inline comments — the "still blocked" signal.
         if [[ "$blocking" -gt 0 ]]; then
           event='REQUEST_CHANGES'
+        elif [[ "${APPROVE:-}" == "true" ]]; then
+          event='APPROVE'
         else
           event='COMMENT'
         fi
@@ -1150,6 +1156,20 @@ runs:
           exit 1
         fi
         echo 'review_posted=true' >> "$GITHUB_OUTPUT"
+
+        # The label says who approved. Best-effort: creating an existing label fails with
+        # 422, and a label failure never fails the review.
+        approved_label='review-bot-approved'
+        if [[ "$event" == "APPROVE" ]]; then
+          gh api --method POST "/repos/${REPOSITORY}/labels" -f name="$approved_label" \
+            -f color=0e8a16 -f description='Approved by the PR review bot' >/dev/null 2>&1 || true
+          gh api --method POST "/repos/${REPOSITORY}/issues/${PR_NUMBER}/labels" \
+            -f "labels[]=${approved_label}" >/dev/null 2>&1 \
+            || echo "::warning::Could not add the ${approved_label} label."
+        elif [[ "$event" == "REQUEST_CHANGES" && "${APPROVE:-}" == "true" ]]; then
+          gh api --method DELETE "/repos/${REPOSITORY}/issues/${PR_NUMBER}/labels/${approved_label}" \
+            >/dev/null 2>&1 || true
+        fi
 
         # Fetch the just-posted review's inline comments and map each finding id to its
         # permanent html_url, matched on the "<!-- id:<slug> -->" marker embedded in the
@@ -1324,7 +1344,7 @@ runs:
           done < <(jq -c '.[]' accepted.json)
         fi
 
-        # US-3 dismiss: when THIS review is clean (COMMENT), dismiss the bot's own earlier
+        # US-3 dismiss: when THIS review is clean (COMMENT or APPROVE), dismiss the bot's own earlier
         # changes-requested reviews so the merge status matches the current verdict.
         # Runs regardless of has_prev — the first clean review can still supersede an
         # earlier changes-requested one. A review is the bot's OWN by the shared rule: its
@@ -1332,7 +1352,7 @@ runs:
         # signature — never login-only (a human review under a shared PAT login without the
         # signature is left alone) and never body-only (a human quoting the signature is
         # left alone). Never the review just posted; nothing dismissed on REQUEST_CHANGES.
-        if [[ "$event" == "COMMENT" ]]; then
+        if [[ "$event" == "COMMENT" || "$event" == "APPROVE" ]]; then
           posted_review_id="$(jq -r '.id // empty' review-response.json)"
           if gh api "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" --paginate > all-reviews-raw.json 2>/dev/null; then
             jq -s 'add // []' all-reviews-raw.json > all-reviews.json
