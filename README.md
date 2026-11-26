@@ -231,6 +231,8 @@ Claude Code is installed from the official `@anthropic-ai/claude-code` package a
 
 When `LANGWATCH_INGEST_KEY` is set, every review run exports full Claude Code OpenTelemetry data (traces, logs, metrics, prompt and tool content) to LangWatch. The action installs the LangWatch CLI and instruments Claude Code on the runner so its hooks report the active repository and branch, allowing LangWatch to attribute the session to matching pull requests. Without the key, the CLI setup is skipped, telemetry is disabled, and the review runs unchanged. Telemetry setup is best-effort and does not block a review.
 
+The action attaches `pr.repository`, `pr.number`, `pr.head.sha`, `review.run.id`, `review.run.attempt`, and `review.quality.sampled` as OpenTelemetry resource attributes to both review and brief telemetry. The sampling flag is a deterministic approximately 10% cohort based on repository and PR number, stable across revisions and retries. It only marks the cohort: it does **not** run a judge or record review outcomes. PR identity is unavailable if telemetry attribution falls back to the service name after a setup error.
+
 With `code_mode` on (the default), Code Mode refuses to start while span tracing is enabled, so the action does not set `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` and forces it off for both `claude -p` calls. Logs and metrics export stays on: telemetry arrives as Claude Code events/logs and metrics, not traces/spans. Set `code_mode: "false"` to get spans back.
 
 Secret (optional):

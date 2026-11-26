@@ -18,3 +18,11 @@ Feature: Review bot observability
     When the pipeline runs
     Then the LangWatch CLI setup is skipped
     And the review runs unchanged and nothing is exported
+
+  Scenario: Review and brief telemetry share a stable PR identity
+    Given telemetry export to LangWatch is configured
+    When the PR reviewer and PR brief workflow run
+    Then both runs carry the repository, PR number, head SHA, workflow run ID and attempt
+    And both carry the same quality-sampling decision for that repository and PR number
+    And a later run for the same PR retains the same quality-sampling decision
+    And the sampling decision selects approximately 10 percent of distinct PRs
