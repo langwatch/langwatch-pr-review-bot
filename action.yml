@@ -38,7 +38,11 @@ inputs:
   claude_code_version:
     description: 'Version of @anthropic-ai/claude-code to install.'
     required: false
-    default: "2.1.270"
+    default: "2.1.332"
+  code_mode:
+    description: "Run `claude -p` with Claude Code's experimental Code Mode (Claude writes JavaScript that batches tool calls; cheaper). Requires tracing off, so telemetry arrives as events/logs and metrics, not spans."
+    required: false
+    default: "true"
   langwatch_cli_version:
     description: 'Version of langwatch (the LangWatch CLI) to install.'
     required: false
@@ -216,6 +220,7 @@ runs:
       shell: bash
       env:
         LANGWATCH_INGEST_KEY: ${{ inputs.langwatch_ingest_key }}
+        CODE_MODE: ${{ inputs.code_mode }}
       run: |
         set -euo pipefail
         # Disabled when LANGWATCH_INGEST_KEY is not configured, so a missing key never breaks the review.
@@ -225,8 +230,11 @@ runs:
         else
           echo "CLAUDE_CODE_ENABLE_TELEMETRY=0" >> "$GITHUB_ENV"
         fi
+        # Code Mode refuses to start while span tracing (the enhanced-telemetry beta) is on.
+        if [[ "$CODE_MODE" != "true" ]]; then
+          echo "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1" >> "$GITHUB_ENV"
+        fi
         {
-          echo "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1"
           echo "OTEL_TRACES_EXPORTER=otlp"
           echo "OTEL_LOGS_EXPORTER=otlp"
           echo "OTEL_METRICS_EXPORTER=otlp"
@@ -393,6 +401,7 @@ runs:
         REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         GH_TOKEN: ${{ inputs.github_token }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
+        CODE_MODE: ${{ inputs.code_mode }}
         # Secret-bearing telemetry header, set per step so it is never echoed to $GITHUB_ENV.
         OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${{ inputs.langwatch_ingest_key }}"
         ACTION_PATH: ${{ github.action_path }}
@@ -926,10 +935,18 @@ runs:
           fi
         fi
 
+        # Code Mode is only honoured from --settings env; the tracing beta is forced off because
+        # Code Mode refuses to start with it (a CLI-written ~/.claude/settings.json may set it).
+        code_mode_args=()
+        if [[ "$CODE_MODE" == "true" ]]; then
+          code_mode_args=(--settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1","CLAUDE_CODE_ENHANCED_TELEMETRY_BETA":"0"}}')
+        fi
+
         rc=0
         timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "$review_prompt" \
           --add-dir "$ACTION_PATH" \
           "${resume_args[@]}" \
+          "${code_mode_args[@]}" \
           --agent pr-reviewer \
           --setting-sources user \
           --output-format json \
@@ -1340,6 +1357,7 @@ runs:
       env:
         REVIEW_TIMEOUT_MINUTES: ${{ inputs.review_timeout_minutes }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_oauth_token }}
+        CODE_MODE: ${{ inputs.code_mode }}
         OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ${{ inputs.langwatch_ingest_key }}"
         ACTION_PATH: ${{ github.action_path }}
         GH_TOKEN: ${{ inputs.github_token }}
@@ -1375,10 +1393,16 @@ runs:
 
         template_path="$ACTION_PATH/.claude/skills/pr-brief/TEMPLATE.md"
 
+        code_mode_args=()
+        if [[ "$CODE_MODE" == "true" ]]; then
+          code_mode_args=(--settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1","CLAUDE_CODE_ENHANCED_TELEMETRY_BETA":"0"}}')
+        fi
+
         rc=0
         timeout "${REVIEW_TIMEOUT_MINUTES}m" claude -p "Continue the current PR-review session and run the pr-brief skill now. Read and follow ${template_path}. The pull request title, description, and review result are in the file ${brief_input_file}; read that file for the PR context. Generate only the human review brief in markdown; do not perform a second code review and do not add findings." \
           --add-dir "$ACTION_PATH" \
           --continue \
+          "${code_mode_args[@]}" \
           --agent pr-reviewer \
           --setting-sources user \
           --output-format text \
