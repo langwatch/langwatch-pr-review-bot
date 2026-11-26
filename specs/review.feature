@@ -42,6 +42,13 @@ Feature: Automated PR review
     And the pull request is labelled "review-bot-approved"
     And the bot's earlier "changes requested" reviews are dismissed as superseded
 
+  Scenario: A refused approval still posts the review
+    Given the workflow sets approve to "true"
+    And GitHub refuses the approval, because the repository does not let Actions approve or the token authored the PR
+    When the PR reviewer finds no blocking violation
+    Then the review is posted as a "comment" review with a warning
+    And the PR reviewer status check passes
+
   Scenario: A blocking review removes the approval label
     Given the workflow sets approve to "true"
     And the pull request is labelled "review-bot-approved"

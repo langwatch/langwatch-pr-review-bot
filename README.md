@@ -86,7 +86,7 @@ Secrets reach the action through inputs (a composite action has no `secrets:` bl
 | Input | Default | Effect |
 | --- | --- | --- |
 | `review_label` | `""` | When set, the review runs only on PRs carrying this label. Empty = always on. |
-| `approve` | `"false"` | `"true"`: a review with no blocking finding posts `APPROVE` (counts toward a required approval) and adds the `review-bot-approved` label; a blocking review removes the label. |
+| `approve` | `"false"` | `"true"`: a review with no blocking finding posts `APPROVE` (counts toward a required approval) and adds the `review-bot-approved` label; a blocking review or an infrastructure-error notice removes the label. Needs **Settings → Actions → General → Allow GitHub Actions to create and approve pull requests**; when GitHub refuses the approval (that setting off, or the token authored the PR) the review posts as `COMMENT` with a warning. |
 | `slack_notify` | `"true"` | Post a Slack notification on blocking findings (needs `slack_webhook_url`). Only `"false"` disables it. |
 | `extra_instructions` | `""` | Extra guidance appended to the review prompt, subordinate to the action's rules file. On same-repo pull_request events this text is PR-controlled; do not treat it as trusted. |
 | `base_branch` | `"main"` | Only review PRs whose base branch is this branch. |

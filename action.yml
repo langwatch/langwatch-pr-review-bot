@@ -1146,10 +1146,23 @@ runs:
           --argjson findings "$(cat findings.json)" \
           '{body:$body,event:$event,commit_id:$sha,comments:[$findings[] | select(.inline == true and .status == "new") | {path:.norm_path,line:.line,side:"RIGHT",body:("**[" + .priority + " · " + (if .blocking then "blocking" else "non-blocking" end) + "]** " + .summary + "\nFix: " + .fix + "\n\n<!-- id:" + .id + " -->")}]}' > review-payload.json
 
-        if ! gh api \
-          --method POST \
-          "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
-          --input review-payload.json > review-response.json; then
+        # GitHub refuses an APPROVE (422) when the repository does not let Actions approve
+        # pull requests, or the token authored the PR. The verdict still stands: post it as
+        # a COMMENT rather than lose the review to the infra notice.
+        post_review() {
+          gh api --method POST "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
+            --input review-payload.json > review-response.json
+        }
+        posted=true
+        post_review || posted=false
+        if [[ "$posted" == "false" && "$event" == "APPROVE" ]]; then
+          echo "::warning::GitHub refused the approval; posting the clean review as a COMMENT. Check that the repository lets GitHub Actions approve pull requests."
+          event='COMMENT'
+          jq '.event = "COMMENT"' review-payload.json > review-payload.tmp && mv review-payload.tmp review-payload.json
+          posted=true
+          post_review || posted=false
+        fi
+        if [[ "$posted" == "false" ]]; then
           echo "::error::POST /repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews failed."
           echo "::group::findings.json"; cat findings.json; echo "::endgroup::"
           echo "::group::review-payload.json"; cat review-payload.json; echo "::endgroup::"
@@ -1499,8 +1512,13 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        APPROVE: ${{ inputs.approve }}
       run: |
         echo "::warning::The automated review could not run (infrastructure error). This check passes so it does not block the merge."
+        # No verdict on this head, so an earlier approval label would be stale.
+        if [[ "${APPROVE:-}" == "true" ]]; then
+          gh api --method DELETE "/repos/${REPOSITORY}/issues/${PR_NUMBER}/labels/review-bot-approved" >/dev/null 2>&1 || true
+        fi
         # Dedupe: a re-run on the same head must not stack notices. Lookup failure just posts.
         existing="$(gh api --paginate "/repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews" 2>/dev/null | jq -s 'add // []' 2>/dev/null || true)"
         if [ -n "$existing" ] && jq -e --arg sha "$PR_HEAD_SHA" 'any(.[]; .commit_id == $sha and ((.body // "") | contains("<!-- review-infra-error -->")))' <<< "$existing" > /dev/null 2>&1; then
